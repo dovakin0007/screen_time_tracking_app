@@ -1,0 +1,19 @@
+[package]
+name = "app_window_tracker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.31"
+winapi = {version ="0.3.9", features = ["sysinfoapi"]}
+window_titles = { git = "https://github.com/HiruNya/window_titles.git" }
+tokio = { version = "1.32.0", features = ["full"] }
+mysql_async = {version = "*"}
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
