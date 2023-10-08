@@ -1,5 +1,7 @@
-use std::{result::Result, collections::HashMap};
 
+use std::{result::Result, collections::HashMap};
+use chrono::Local ;
+use chrono::NaiveDate;
 use mysql_async::{prelude::*, Opts};
 
 
@@ -19,6 +21,12 @@ pub struct AppData{
 impl AppData {
     pub fn new(app_name: String, seconds_spent: u32, date: String, main_key:String) -> Self {
         Self {main_key, app_name, seconds_spent, hours_spent: 0, minutes_spent:0 , current_day:date}
+    }
+
+    pub fn store_data(app_id: String, app_name: String, seconds_spent: u32, hours_spent:u32, minutes_spent: u32) -> Self {
+        let current_day= Local::now();
+        let today_date = current_day.date_naive();
+        Self { main_key:app_id , app_name, seconds_spent, hours_spent, minutes_spent, current_day: today_date.to_string()}
     }
 
     pub fn get_date(&self) -> &str {
@@ -56,10 +64,8 @@ impl AppData {
 
 }
 
-pub async fn update_db(data :AppTimeSpentMap) -> Result<(), std::io::Error>{
+pub async fn update_db(data :&AppTimeSpentMap) -> Result<(), std::io::Error>{
     let database_url = Opts::from_url("mysql://root:dOVAKIN03!@localhost/screen_time_monitoring").unwrap();
-
-    
     let pool = mysql_async::Pool::new(database_url);
     let mut conn = pool.get_conn().await.unwrap();
     let data_vec = data.values().clone().collect::<Vec<_>>();
@@ -84,6 +90,39 @@ pub async fn update_db(data :AppTimeSpentMap) -> Result<(), std::io::Error>{
         .await.map_err(|e|{
             eprintln!("Error: {:?}", e)
         }).unwrap();
+        
+    drop(conn);
+
+
+    pool.disconnect().await.unwrap();
 
     Ok(())
+}
+
+pub async fn get_data_from_db<'a>(data_map: &'a mut AppTimeSpentMap, today_date: &NaiveDate) -> Result<&'a mut AppTimeSpentMap, std::io::Error>{
+    let database_url = Opts::from_url("mysql://root:dOVAKIN03!@localhost/screen_time_monitoring").unwrap();
+    let curr_day = today_date.to_string();
+    
+    let pool = mysql_async::Pool::new(database_url);
+    let mut conn = pool.get_conn().await.unwrap();
+
+    let loaded_data =  r"Select app_id, app_name, seconds_spent, hours_spent, minutes_spent 
+    from monitoring_table where current_day=:today".with(params!{
+        "today" => curr_day
+    }).map(&mut conn, |(app_id, app_name, seconds_spent, hours_spent, minutes_spent)|{
+        println!("{app_id}:{app_name}:{seconds_spent}:{hours_spent}:{minutes_spent}");
+        AppData::store_data(app_id, app_name, seconds_spent, hours_spent, minutes_spent)
+    }).await.unwrap();
+    
+    let _ = loaded_data.iter().map(|app_data|{
+        data_map.insert(app_data.app_name.clone(), app_data.to_owned())
+    }).collect::<Vec<_>>();
+
+    drop(conn);
+
+
+    pool.disconnect().await.unwrap();
+
+    Ok(data_map)
+    
 }

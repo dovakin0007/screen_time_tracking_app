@@ -1,4 +1,3 @@
-
 use std::{time , thread::sleep, collections::HashMap};
 use std::time::{Duration, Instant};
 use winapi::um::winuser::{GetWindowTextA, GetWindowTextLengthA, GetForegroundWindow};
@@ -9,16 +8,11 @@ use winapi::um::winuser::{
     };
 use winapi::um::winnt::LPSTR;
 use winapi::um::sysinfoapi::GetTickCount;
-use chrono::Local;
-
+use chrono::Local ;
 
 mod app_data;
 
 use app_data::*;
-
-
-
-
 
 pub fn get_last_input_info()-> Result<Duration, ()> {
     let now = unsafe {
@@ -48,13 +42,7 @@ pub fn get_last_input_info()-> Result<Duration, ()> {
 //     println!("{}", std::any::type_name::<T>())
 // }
 
-
-#[tokio::main]
-async fn main()-> Result<(), ()>{
-    let mut app_spent_time_map:AppTimeSpentMap = HashMap::new(); 
- 
-    loop{
-
+pub async fn app(app_spent_time_map:  &mut HashMap<String, AppData>) -> Result<(), ()> {
     let start = Instant::now();
     
     let current_widow = unsafe{ GetForegroundWindow() };
@@ -78,7 +66,6 @@ async fn main()-> Result<(), ()>{
 
     let dt1= Local::now();
     let today = dt1.date_naive();
-    
     
     let current_date = today.to_string();
 
@@ -104,18 +91,30 @@ async fn main()-> Result<(), ()>{
         println!("got called");
         app_spent_time_map.get_mut(last_val).unwrap().reset_time(current_date.clone())
     }
-    
-    
-    
-    
-    
+
     let duration = start.elapsed();
 
-    update_db(app_spent_time_map.clone()).await.unwrap();
+    update_db(&app_spent_time_map).await.unwrap();
     println!("Time elapsed in expensive_function() is: {:?}", duration);
-    let time_delay_for_function = 10000 - duration.as_micros();
-    let delay = time::Duration::from_micros(time_delay_for_function.try_into().unwrap_or(10000));
+    let time_delay_for_function = 1000 - duration.as_millis();
+    let delay = time::Duration::from_millis(time_delay_for_function.try_into().unwrap_or(1000));
     sleep(delay);
+
+    Ok(())
+
+}
+#[tokio::main]
+async fn main()-> Result<(), ()>{
+    let mut app_spent_time:AppTimeSpentMap = HashMap::new(); 
+    let current_day= Local::now();
+    let today_date = current_day.date_naive();
+
+    let app_spent_time_map: &mut HashMap<String, AppData>=get_data_from_db(&mut app_spent_time, &today_date).await.unwrap();
+    loop{
+
+        app(app_spent_time_map).await.unwrap()
+
     }
 
 }
+    
