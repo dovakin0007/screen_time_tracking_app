@@ -1,11 +1,13 @@
 
 use std::{result::Result, collections::HashMap};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use chrono::Local ;
 use chrono::NaiveDate;
 use mysql_async::{prelude::*, Opts};
 
 
-pub type AppTimeSpentMap = HashMap<String,AppData>;
+pub type AppTimeSpentMap = Arc<Mutex<HashMap<String,AppData>>>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AppData{ 
@@ -64,7 +66,7 @@ impl AppData {
 
 }
 
-pub async fn update_db(data :&AppTimeSpentMap) -> Result<(), std::io::Error>{
+pub async fn update_db(data :&HashMap<String, AppData>) -> Result<(), std::io::Error>{
     let database_url = Opts::from_url("mysql://root:dOVAKIN03!@localhost/screen_time_monitoring").unwrap();
     let pool = mysql_async::Pool::new(database_url);
     let mut conn = pool.get_conn().await.unwrap();
@@ -99,7 +101,7 @@ pub async fn update_db(data :&AppTimeSpentMap) -> Result<(), std::io::Error>{
     Ok(())
 }
 
-pub async fn get_data_from_db<'a>(data_map: &'a mut AppTimeSpentMap, today_date: &NaiveDate) -> Result<&'a mut AppTimeSpentMap, std::io::Error>{
+pub async fn get_data_from_db<'a>(data_map: &'a mut HashMap<String,AppData>, today_date: &NaiveDate) -> Result<&'a mut HashMap<String,AppData>, std::io::Error>{
     let database_url = Opts::from_url("mysql://root:dOVAKIN03!@localhost/screen_time_monitoring").unwrap();
     let curr_day = today_date.to_string();
     

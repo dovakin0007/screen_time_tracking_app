@@ -1,4 +1,4 @@
-use std::{time , thread::sleep, collections::HashMap};
+use std::{time, collections::HashMap};
 use std::time::{Duration, Instant};
 use winapi::um::winuser::{GetWindowTextA, GetWindowTextLengthA, GetForegroundWindow};
 use winapi::um::winuser::{
@@ -8,12 +8,35 @@ use winapi::um::winuser::{
     };
 use winapi::um::winnt::LPSTR;
 use winapi::um::sysinfoapi::GetTickCount;
-use chrono::Local ;
+use chrono::Local;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 mod app_data;
 
 use app_data::*;
 
+
+pub fn get_title_vec<'a>() -> String{
+    let current_widow = unsafe{ GetForegroundWindow() };
+
+    let length = unsafe { GetWindowTextLengthA(current_widow) };
+
+    let mut title:Vec<u8> = vec![0; (length + 1) as usize];
+    let textw = unsafe { GetWindowTextA(current_widow, title.as_mut_ptr() as LPSTR , length + 1) };
+
+
+    let mut title= String::from_utf8(title[0..(textw  as usize)].as_ref().to_vec()).map_err(|e|{
+        eprintln!("ERROR: Failed to get window title : {e}")
+    }).unwrap_or("Invalid_app_Name".parse().unwrap());
+    if textw == 0  {
+        title = "Home screen".to_owned()
+    }
+
+
+    let title_name_vec = title.split('-').map(|v| v.to_owned()).collect::<Vec<_>>();
+    return title_name_vec.last().unwrap().trim().to_string();
+}
 pub fn get_last_input_info()-> Result<Duration, ()> {
     let now = unsafe {
         GetTickCount()
@@ -42,27 +65,12 @@ pub fn get_last_input_info()-> Result<Duration, ()> {
 //     println!("{}", std::any::type_name::<T>())
 // }
 
-pub async fn app(app_spent_time_map:  &mut HashMap<String, AppData>) -> Result<(), ()> {
+pub async fn app(app_spent_time_map: Arc<Mutex<HashMap<String, AppData>>>) {
     let start = Instant::now();
-    
-    let current_widow = unsafe{ GetForegroundWindow() };
- 
-    let length = unsafe { GetWindowTextLengthA(current_widow) };
+    let mut app_spent_time_map = (app_spent_time_map.lock()).await;
+    // let mut app_spent_time_map = *(app_spent_time_map_new.clone());
 
-    let mut title:Vec<u8> = vec![0; (length + 1) as usize];
-    let textw = unsafe { GetWindowTextA(current_widow, title.as_mut_ptr() as LPSTR , length + 1) };
-    
-
-    let mut title= String::from_utf8(title[0..(textw  as usize)].as_ref().to_vec()).map_err(|e|{
-        eprintln!("ERROR: Failed to get window title : {e}")
-    })?; 
-    if textw == 0  {
-        title = "Home screen".to_owned()
-    }
-
-
-    let x = title.split('-').into_iter().collect::<Vec<_>>();
-    let mut last_val = x.last().unwrap().trim();
+    let mut last_val = get_title_vec();
 
     let dt1= Local::now();
     let today = dt1.date_naive();
@@ -72,24 +80,24 @@ pub async fn app(app_spent_time_map:  &mut HashMap<String, AppData>) -> Result<(
     let idle_time  =get_last_input_info().unwrap().as_secs();
 
     if idle_time >= 300 {
-        last_val = "Idle Time"
+        last_val = "Idle Time".parse().unwrap()
     }    
 
-    if app_spent_time_map.contains_key(last_val) {
-        app_spent_time_map.get_mut(last_val).unwrap().update_seconds(1) ;
+    if app_spent_time_map.contains_key(last_val.as_str()) {
+        app_spent_time_map.get_mut(last_val.as_str()).unwrap().update_seconds(1) ;
     }else {
        let mut main_key = last_val.clone().to_owned(); 
        main_key.push_str(&current_date);
         app_spent_time_map.insert(last_val.to_owned(), AppData::new(last_val.clone().to_owned(), 1, current_date.clone(), main_key));
     }
 
-    let (key, value) = &app_spent_time_map.get_key_value(last_val).unwrap();
+    let (key, value) = &app_spent_time_map.get_key_value(last_val.as_str()).unwrap();
 
     println!("{key}: {value:?}");
 
-    if app_spent_time_map.get(last_val).unwrap().get_date().to_string() != current_date.clone(){
+    if app_spent_time_map.get(&*last_val).unwrap().get_date().to_string() != current_date.clone(){
         println!("got called");
-        app_spent_time_map.get_mut(last_val).unwrap().reset_time(current_date.clone())
+        app_spent_time_map.get_mut(&*last_val).unwrap().reset_time(current_date.clone())
     }
 
     let duration = start.elapsed();
@@ -98,21 +106,26 @@ pub async fn app(app_spent_time_map:  &mut HashMap<String, AppData>) -> Result<(
     println!("Time elapsed in expensive_function() is: {:?}", duration);
     let time_delay_for_function = 1000 - duration.as_millis();
     let delay = time::Duration::from_millis(time_delay_for_function.try_into().unwrap_or(1000));
-    sleep(delay);
-
-    Ok(())
-
+    tokio::time::sleep(delay).await;
 }
 #[tokio::main]
 async fn main()-> Result<(), ()>{
-    let mut app_spent_time:AppTimeSpentMap = HashMap::new(); 
+
+
+    let mut app_time_spent_map = HashMap::new();
     let current_day= Local::now();
     let today_date = current_day.date_naive();
+    let app_spent_time_new: &mut HashMap<String, AppData>=get_data_from_db(&mut app_time_spent_map, &today_date).await.unwrap();
+    let app_spent_time:AppTimeSpentMap = Arc::new(Mutex::new(app_spent_time_new.to_owned()));
 
-    let app_spent_time_map: &mut HashMap<String, AppData>=get_data_from_db(&mut app_spent_time, &today_date).await.unwrap();
+
+
+
     loop{
 
-        app(app_spent_time_map).await.unwrap()
+        let app_spent_time= app_spent_time.clone();
+        tokio::spawn(app(app_spent_time)).await.unwrap();
+
 
     }
 

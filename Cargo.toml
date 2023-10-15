@@ -11,6 +11,11 @@ winapi = {version ="0.3.9", features = ["sysinfoapi"]}
 window_titles = { git = "https://github.com/HiruNya/window_titles.git" }
 tokio = { version = "1.32.0", features = ["full"] }
 mysql_async = {version = "*"}
+tokio-tungstenite = "0.20.1"
+futures-channel = "0.3.28"
+futures-util = "0.3.28"
+futures = "0.3.28"
+url = "2.4.1"
 
 [profile.dev]
 opt-level = 0
