@@ -1,13 +1,9 @@
-
 use std::{result::Result, collections::HashMap};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use chrono::Local ;
 use chrono::NaiveDate;
 use mysql_async::{prelude::*, Opts};
 
 
-pub type AppTimeSpentMap = Arc<Mutex<HashMap<String,AppData>>>;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AppData{ 
@@ -50,18 +46,20 @@ impl AppData {
         self.seconds_spent = 0;
     }
 
-    fn  update_hours(&mut self) {
+    fn update_hours(&mut self) {
         self.hours_spent +=1;
         self.minutes_spent = 0;
         self.seconds_spent = 0;
-
     }
-
     pub fn reset_time(&mut self, date: String) {
         self.seconds_spent = 0;
         self.hours_spent = 0;
         self.minutes_spent = 0;
         self.current_day = date;
+    }
+
+    pub fn get_string(&self) -> String{
+        format!("app name: {} : date: {} : time spent: {}:{}:{}",&self.app_name, &self.current_day, &self.hours_spent, &self.minutes_spent, &self.seconds_spent)
     }
 
 }
@@ -71,7 +69,7 @@ pub async fn update_db(data :&HashMap<String, AppData>) -> Result<(), std::io::E
     let pool = mysql_async::Pool::new(database_url);
     let mut conn = pool.get_conn().await.unwrap();
     let data_vec = data.values().clone().collect::<Vec<_>>();
-    println!("connected");
+    // println!("connected");
     // let dt1= Local::now();
     // let today = dt1.date_naive();
     r"REPLACE INTO monitoring_table VALUES (
@@ -112,7 +110,7 @@ pub async fn get_data_from_db<'a>(data_map: &'a mut HashMap<String,AppData>, tod
     from monitoring_table where current_day=:today".with(params!{
         "today" => curr_day
     }).map(&mut conn, |(app_id, app_name, seconds_spent, hours_spent, minutes_spent)|{
-        println!("{app_id}:{app_name}:{seconds_spent}:{hours_spent}:{minutes_spent}");
+        //println!("{app_id}:{app_name}:{seconds_spent}:{hours_spent}:{minutes_spent}");
         AppData::store_data(app_id, app_name, seconds_spent, hours_spent, minutes_spent)
     }).await.unwrap();
     

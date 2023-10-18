@@ -1,72 +1,30 @@
 use std::{time, collections::HashMap};
-use std::time::{Duration, Instant};
-use winapi::um::winuser::{GetWindowTextA, GetWindowTextLengthA, GetForegroundWindow};
-use winapi::um::winuser::{
-        LASTINPUTINFO,
-        PLASTINPUTINFO,
-        GetLastInputInfo,
-    };
-use winapi::um::winnt::LPSTR;
-use winapi::um::sysinfoapi::GetTickCount;
+use std::time::Instant;
+
 use chrono::Local;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast::{ Sender }, Mutex,broadcast};
+use tokio::net::TcpListener;
+use futures_util::{future, pin_mut, StreamExt, TryStreamExt};
+use futures_channel::mpsc::{unbounded, UnboundedSender};
+
+use tokio_tungstenite::tungstenite::Message;
 
 mod app_data;
+mod app;
+mod win;
 
 use app_data::*;
+use win::*;
+type Tx = UnboundedSender<Message>;
+type PeerMap = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 
 
-pub fn get_title_vec<'a>() -> String{
-    let current_widow = unsafe{ GetForegroundWindow() };
-
-    let length = unsafe { GetWindowTextLengthA(current_widow) };
-
-    let mut title:Vec<u8> = vec![0; (length + 1) as usize];
-    let textw = unsafe { GetWindowTextA(current_widow, title.as_mut_ptr() as LPSTR , length + 1) };
-
-
-    let mut title= String::from_utf8(title[0..(textw  as usize)].as_ref().to_vec()).map_err(|e|{
-        eprintln!("ERROR: Failed to get window title : {e}")
-    }).unwrap_or("Invalid_app_Name".parse().unwrap());
-    if textw == 0  {
-        title = "Home screen".to_owned()
-    }
-
-
-    let title_name_vec = title.split('-').map(|v| v.to_owned()).collect::<Vec<_>>();
-    return title_name_vec.last().unwrap().trim().to_string();
-}
-pub fn get_last_input_info()-> Result<Duration, ()> {
-    let now = unsafe {
-        GetTickCount()
-    };
-
-    let mut last_input_info = LASTINPUTINFO {
-        cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-        dwTime: 0
-    };
-    let p_last_input_info: PLASTINPUTINFO = &mut last_input_info as *mut LASTINPUTINFO;
-
-    let time_ok = unsafe { GetLastInputInfo(p_last_input_info) } != 0;
-
-    match time_ok {
-        true => {
-            let millis =now -  last_input_info.dwTime;
-            Ok(Duration::from_millis(millis as u64))
-        }
-        false => {
-            Err(())
-        }
-    }
-}
-
-// fn _print_type_of<T>(_: &T){
-//     println!("{}", std::any::type_name::<T>())
-// }
-
-pub async fn app(app_spent_time_map: Arc<Mutex<HashMap<String, AppData>>>) {
+pub async fn app(app_spent_time_map: Arc<Mutex<HashMap<String, AppData>>>, tx_t: Sender<String>) {
     let start = Instant::now();
+
+
     let mut app_spent_time_map = (app_spent_time_map.lock()).await;
     // let mut app_spent_time_map = *(app_spent_time_map_new.clone());
 
@@ -77,7 +35,7 @@ pub async fn app(app_spent_time_map: Arc<Mutex<HashMap<String, AppData>>>) {
     
     let current_date = today.to_string();
 
-    let idle_time  =get_last_input_info().unwrap().as_secs();
+    let idle_time = get_last_input_info().unwrap().as_secs();
 
     if idle_time >= 300 {
         last_val = "Idle Time".parse().unwrap()
@@ -91,40 +49,96 @@ pub async fn app(app_spent_time_map: Arc<Mutex<HashMap<String, AppData>>>) {
         app_spent_time_map.insert(last_val.to_owned(), AppData::new(last_val.clone().to_owned(), 1, current_date.clone(), main_key));
     }
 
-    let (key, value) = &app_spent_time_map.get_key_value(last_val.as_str()).unwrap();
+    let (_key, value) = &app_spent_time_map.get_key_value(last_val.as_str()).unwrap();
+    let ws_string = value.get_string();
 
-    println!("{key}: {value:?}");
+    tx_t.send(ws_string).expect("Unable to send data");
+//    println!("{key}: {value:?}");
 
     if app_spent_time_map.get(&*last_val).unwrap().get_date().to_string() != current_date.clone(){
-        println!("got called");
+        // println!("got called");
         app_spent_time_map.get_mut(&*last_val).unwrap().reset_time(current_date.clone())
     }
 
     let duration = start.elapsed();
 
     update_db(&app_spent_time_map).await.unwrap();
-    println!("Time elapsed in expensive_function() is: {:?}", duration);
+   println!("Time elapsed in expensive_function() is: {:?}", duration);
     let time_delay_for_function = 1000 - duration.as_millis();
     let delay = time::Duration::from_millis(time_delay_for_function.try_into().unwrap_or(1000));
     tokio::time::sleep(delay).await;
 }
 #[tokio::main]
-async fn main()-> Result<(), ()>{
-
+async fn main(){
+    let (tx_t_broadcast, _rx_t_broadcast) = broadcast::channel(1024);
+    let listener = TcpListener::bind("127.0.0.1:8080").await.expect("Unable to bind to server");
+    let state = PeerMap::new(Mutex::new(HashMap::new()));
 
     let mut app_time_spent_map = HashMap::new();
     let current_day= Local::now();
     let today_date = current_day.date_naive();
     let app_spent_time_new: &mut HashMap<String, AppData>=get_data_from_db(&mut app_time_spent_map, &today_date).await.unwrap();
-    let app_spent_time:AppTimeSpentMap = Arc::new(Mutex::new(app_spent_time_new.to_owned()));
+    let app_spent_time:Arc<Mutex<HashMap<String, AppData>>> = Arc::new(Mutex::new(app_spent_time_new.to_owned()));
+
+    // let ws_app_spent_time = app_spent_time.clone();
+    // let mut rx_t_broadcast_clone = tx_t_broadcast.subscribe();
+    let tx_t_broadcast_new = tx_t_broadcast.clone();
+    tokio::spawn(async move{
+
+        while let Ok((stream, addr)) = listener.accept().await {
+            let tx_t_broadcast = tx_t_broadcast.clone();
+            let state = state.clone();
+            tokio::spawn(async move{
+                let tx_t_broadcast = tx_t_broadcast.clone();
+                println!("Connection from: {}", addr);
+                let ws_stream = tokio_tungstenite::accept_async(stream).await.expect("Error during the websocket handshake occurred");
+                println!("WebSocket connection established: {}", addr);
+
+                let (tx, rx) = unbounded();
+                (state.lock()).await.insert(addr, tx);
+                let new_state = state.clone();
+                let (outgoing, incoming) = ws_stream.split();
+                let broadcast_incoming = incoming.try_for_each( move|msg| {
+                    let new_state = Arc::clone(&new_state);
+                    let mut rx_t_new_clone = tx_t_broadcast.subscribe();
+                    async move {
+                        println!("Received a message from {}: {}", addr, msg.to_text().unwrap());
+
+                        let peers = new_state.lock().await;
+
+                        let broadcast_recipients = peers.iter().map(|(_, ws_sink)| ws_sink);
+
+                        let received_data = if let Ok(recv_data) = rx_t_new_clone.recv().await {
+                            println!("{recv_data}");
+                            recv_data
+                        }else {
+                            println!("No data received");
+                            String::from("Error couldnt read the data")
+                        };
+                        // println!("{}",rx_t_new_clone.recv().await.unwrap());
+
+                        for recp in broadcast_recipients {
+                            recp.unbounded_send(msg.clone()).expect("unable to send the message");
+                            recp.unbounded_send(Message::Binary(received_data.clone().into_bytes())).expect("unable to parse and send the message");
+                        }
+                        Ok(())
+                    }
+                });
+
+                let receive_from_others = rx.map(Ok).forward(outgoing);
+                pin_mut!(broadcast_incoming, receive_from_others);
+                future::select(broadcast_incoming, receive_from_others).await;
 
 
-
-
+                println!("{} disconnected", &addr);
+                state.lock().await.remove(&addr);
+            });
+        }
+    });
     loop{
 
         let app_spent_time= app_spent_time.clone();
-        tokio::spawn(app(app_spent_time)).await.unwrap();
+        tokio::spawn(app(app_spent_time, tx_t_broadcast_new.clone())).await.unwrap();
 
 
     }
