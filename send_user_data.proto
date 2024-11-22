@@ -1,0 +1,19 @@
+syntax = "proto3"
+
+option java_multiple_file = true;
+option java_outer_classname = "AppDataRetrivalProto"
+
+package senduserdata
+
+service AppDataRetrival {
+    rpc ScreenTimeUsage() returns (stream UsageData);
+}
+
+message UsageData {
+    uint32 app_id = 1;
+    string app_title = 2;
+    uint32 seconds_spent = 3;
+    uint32 hours_spent = 4;
+    uint32 minutes_spent = 5;
+    string current_day = 6;
+}

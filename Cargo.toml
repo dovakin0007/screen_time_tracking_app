@@ -5,17 +5,23 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58.0", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
 [dependencies]
 chrono = "0.4.31"
-winapi = {version ="0.3.9", features = ["sysinfoapi"]}
-window_titles = { git = "https://github.com/HiruNya/window_titles.git" }
 tokio = { version = "1.32.0", features = ["full"] }
-mysql_async = {version = "*"}
-tokio-tungstenite = "0.20.1"
-futures-channel = "0.3.28"
-futures-util = "0.3.28"
-futures = "0.3.28"
+mysql_async = { version = "*" }
 url = "2.4.1"
+tonic = "0.12.3"
+prost = "0.13.3"
+
+[build-dependencies]
+tonic-build = "0.12.3"
 
 [profile.dev]
 opt-level = 0
