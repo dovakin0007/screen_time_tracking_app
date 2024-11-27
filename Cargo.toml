@@ -10,6 +10,8 @@ windows = { version = "0.58.0", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_SystemInformation",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
 ] }
 
 [dependencies]
@@ -19,6 +21,12 @@ mysql_async = { version = "*" }
 url = "2.4.1"
 tonic = "0.12.3"
 prost = "0.13.3"
+diesel = { version = "2.2.0", features = ["postgres", "uuid", "time", "serde_json"] }
+anyhow = "1.0.93"
+uuid = {version = "1.11.0", features = ["serde", "v4"]}
+serde = "1.0.215"
+futures = "0.3.31"
+dotenvy = "0.15.7"
 
 [build-dependencies]
 tonic-build = "0.12.3"
