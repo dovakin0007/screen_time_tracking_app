@@ -9,7 +9,6 @@ use platform::Platform;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-mod app_data;
 mod platform;
 mod rpc_service;
 mod db;
