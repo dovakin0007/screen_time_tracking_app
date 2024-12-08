@@ -1,3 +1,3 @@
-mod schema;
-pub(crate) mod models;
 pub(crate) mod connection;
+pub(crate) mod models;
+mod schema;

@@ -1,1 +1,5 @@
 target/
+stop_procastinating.sqlite3
+send_user_data.proto
+screentime_app_flow.pdf
+.gitignore
