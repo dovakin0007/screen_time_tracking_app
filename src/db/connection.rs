@@ -1,7 +1,7 @@
+use log::error;
 use rusqlite::{params, Connection};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
-use log::error;
 
 use super::models::{App, AppUsage};
 

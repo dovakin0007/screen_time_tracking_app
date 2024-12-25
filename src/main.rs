@@ -9,18 +9,18 @@ use chrono::Local;
 use db::connection::upset_app_usage;
 use db::models::{App, AppUsage};
 use dirs;
-use env_logger::Builder;
 use dotenvy::dotenv;
+use env_logger::Builder;
+use log::{error, info};
 use platform::Platform;
 use platform::WindowDetails;
 use rusqlite::Connection;
 use std::env;
+use std::io::Write;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use std::io::Write;
-use log::{error, info};
 
 mod db;
 mod platform;
@@ -176,7 +176,10 @@ async fn main() {
         #[cfg(not(debug_assertions))]
         {
             let log_file = File::create(&log_file_path).unwrap_or_else(|err| {
-                panic!("Failed to create log file at {:?}: {:?}", log_file_path, err);
+                panic!(
+                    "Failed to create log file at {:?}: {:?}",
+                    log_file_path, err
+                );
             });
 
             env_logger::Builder::from_default_env()
@@ -192,18 +195,24 @@ async fn main() {
                 .target(env_logger::Target::Pipe(Box::new(log_file))) // Logs to file in release mode
                 .filter(None, log::LevelFilter::Info) // Info-level logging for release
                 .init();
-            println!("Release mode: Logger initialized to write to file at {:?}", log_file_path);
+            println!(
+                "Release mode: Logger initialized to write to file at {:?}",
+                log_file_path
+            );
         }
 
         info!("Logger configured successfully.");
         println!("called");
 
-        let conn = Arc::new(Mutex::new(
-            Connection::open(&db_path).unwrap_or_else(|err| {
-                error!("Failed to open database connection at {:?}: {:?}", db_path, err);
+        let conn = Arc::new(Mutex::new(Connection::open(&db_path).unwrap_or_else(
+            |err| {
+                error!(
+                    "Failed to open database connection at {:?}: {:?}",
+                    db_path, err
+                );
                 panic!("Cannot proceed without database connection");
-            }),
-        ));
+            },
+        )));
         info!("Database connection established at: {:?}", db_path);
 
         let (ctrl_c_tx, ctrl_c_rx) = unbounded_channel::<()>();
