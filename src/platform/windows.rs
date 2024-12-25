@@ -1,11 +1,12 @@
 use anyhow::Result;
+use std::collections::BTreeMap;
 use std::os::windows::prelude::*;
 use std::time::Duration;
 use std::{ffi::OsString, path::Path};
-use windows::Win32::Foundation::BOOL;
 use windows::Win32::Foundation::LPARAM;
+use windows::Win32::Foundation::{BOOL, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
+    EnumWindows, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, FALSE, HINSTANCE, HWND},
@@ -16,9 +17,7 @@ use windows::Win32::{
     },
     UI::{
         Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
-        WindowsAndMessaging::{
-            GetWindowTextA, GetWindowTextLengthA, GetWindowThreadProcessId,
-        },
+        WindowsAndMessaging::{GetWindowTextA, GetWindowTextLengthA, GetWindowThreadProcessId},
     },
 };
 
@@ -28,8 +27,8 @@ use super::Platform;
 pub struct WindowsHandle;
 
 impl Platform for WindowsHandle {
-    fn get_window_titles() -> Vec<WindowDetails> {
-        let state: Box<Vec<WindowDetails>> = Box::new(Vec::new());
+    fn get_window_titles() -> BTreeMap<String, WindowDetails> {
+        let state: Box<BTreeMap<String, WindowDetails>> = Box::new(BTreeMap::new());
         let state_ptr = Box::into_raw(state);
         let state;
         let result = unsafe { EnumWindows(Some(enumerate_windows), LPARAM(state_ptr as isize)) };
@@ -107,7 +106,23 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
     if IsWindowVisible(window).as_bool() == false {
         return BOOL::from(true);
     }
-    let state = state.0 as *mut Vec<WindowDetails>;
+
+    let mut rect = RECT::default();
+    if GetWindowRect(window, &mut rect).is_err() {
+        return BOOL::from(true);
+    }
+
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+
+    if rect.left <= -32000 && rect.top <= -32000 {
+        return BOOL::from(true);
+    }
+    if width <= 1 || height <= 1 {
+        return BOOL::from(true);
+    }
+
+    let state = state.0 as *mut BTreeMap<String, WindowDetails>;
 
     let length = GetWindowTextLengthW(window);
     if length == 0 {
@@ -123,18 +138,27 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                     eprintln!("unable to get process name");
                 })
                 .unwrap_or(String::from("Invalid path"));
+
             let app_name = get_app_name_from_path(&path_name);
             let app_name2 = if let Some(name) = app_name {
                 name
             } else {
                 String::from("Invalid app name")
             };
-            (*state).push(WindowDetails {
-                window_title: title,
-                app_name: Some(app_name2),
-                app_path: Some(path_name),
-                is_active: false,
-            });
+
+            if title != "Windows Input Experience".to_owned()
+                || title != "Program Manager".to_owned()
+            {
+                (*state).insert(
+                    title.clone(),
+                    WindowDetails {
+                        window_title: title,
+                        app_name: Some(app_name2),
+                        app_path: Some(path_name),
+                        is_active: false,
+                    },
+                );
+            }
         }
     }
     BOOL::from(true)

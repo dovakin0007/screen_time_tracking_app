@@ -1,101 +1,177 @@
-// #![windows_subsystem = "windows"]
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time;
 use std::time::Instant;
 
-use db::connection::{upsert_app_usages, upsert_apps};
-use db::models::{NewApp, NewAppUsage};
-use diesel::SqliteConnection;
+use chrono::Local;
+use db::connection::upset_app_usage;
+use db::models::{App, AppUsage};
+use dirs;
+use dotenvy::dotenv;
 use platform::Platform;
-use spin_sleep::SpinSleeper;
+use platform::WindowDetails;
+use rusqlite::Connection;
 use std::env;
-use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use winreg::enums::*;
-use winreg::RegKey;
 
 mod db;
 mod platform;
-mod rpc_service;
-use platform::windows::{self, *};
+use platform::windows::{self, WindowsHandle};
 
-pub async fn app(pg_conn: Arc<Mutex<SqliteConnection>>, session_id: String) {
+type Sender = mpsc::UnboundedSender<(HashMap<String, App>, HashMap<String, AppUsage>)>;
+async fn track_application_usage(
+    session_id: String,
+    tx: Sender,
+    mut ctrl_c_recv: tokio::sync::mpsc::UnboundedReceiver<()>,
+) {
+    let mut previous_app_map: HashMap<String, App> = HashMap::new();
+    let mut previous_app_usage_map: HashMap<String, AppUsage> = HashMap::new();
+
     loop {
-        let start = Instant::now();
-        let (new_apps, new_app_usages): (Vec<NewApp>, Vec<NewAppUsage>) =
-            windows::WindowsHandle::get_window_titles()
-                .into_iter()
-                .map(|details| {
-                    // Get idle time
-                    let idle_time = WindowsHandle::get_last_input_info()
-                        .unwrap_or_default()
-                        .as_secs();
+        tokio::select! {
+            Some(_) = ctrl_c_recv.recv() => {
+                if let Err(err) = tx.send((previous_app_map.clone(), previous_app_usage_map.clone())) {
+                    eprintln!("Failed to send data on shutdown: {:?}", err);
+                }
+                println!("Shutdown signal received. Exiting tracking loop.");
+                break;
+            },
+            _ = async {
+                let start = Instant::now();
 
-                    // Determine the window activity
-                    let window_activity = if idle_time >= 300 {
-                        "Idle Time".to_string()
-                    } else {
-                        details.window_title.clone()
+                let window_state = windows::WindowsHandle::get_window_titles();
+                let idle_time_secs = WindowsHandle::get_last_input_info()
+                    .unwrap_or_default()
+                    .as_secs();
+                let idle_state = idle_time_secs >= 300;
+
+                let mut modified_window_state = window_state.clone();
+
+                if idle_state {
+                    if let Some(first_entry) = modified_window_state.first_entry() {
+                        let value = first_entry.get().clone();
+                        let mut key = String::from("Idle Time");
+                        key.push_str(&value.app_name.clone().unwrap_or("Unknown app".to_owned()));
+                        modified_window_state.insert(
+                            key,
+                            WindowDetails {
+                                window_title: "Idle".to_owned(),
+                                app_name: value.app_name.clone(),
+                                app_path: value.app_path.clone(),
+                                is_active: false,
+                            },
+                        );
+                    }
+                }
+
+                let before_retain_count = previous_app_usage_map.len();
+
+                for (_, value) in modified_window_state.clone().into_iter() {
+                    let app_name = value
+                        .app_name
+                        .clone()
+                        .unwrap_or_else(|| "Unknown App".to_string());
+                    let app_path = value
+                        .app_path
+                        .clone()
+                        .unwrap_or_else(|| "Unknown Path".to_string());
+
+                    let app = App {
+                        name: app_name.clone(),
+                        path: app_path,
                     };
 
-                    // Create NewApp
-                    let new_app = NewApp {
-                        app_name: details
-                            .app_name
-                            .clone()
-                            .unwrap_or_else(|| "Unknown App".to_string()),
-                        app_path: details.app_path.clone(),
-                    };
+                    let current_time = Local::now().naive_utc();
+                    let entry = previous_app_usage_map.entry(value.window_title.clone());
+                    match entry {
+                        std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                            let app_usage = occupied_entry.get_mut();
 
-                    // Create NewAppUsage
-                    let new_app_usage = NewAppUsage {
-                        session_id: session_id.to_string(), // Ensure session_id is available in scope
-                        app_name: details
-                            .app_name
-                            .clone()
-                            .unwrap_or_else(|| "Unknown App".to_string()),
-                        screen_title_name: window_activity,
-                        duration_in_seconds: 1, // Initialize with 1 second
-                        is_active: if details.is_active { 1 } else { 0 },
-                    };
+                            app_usage.last_updated_time = current_time;
+                        }
+                        std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                            let app_usage = AppUsage {
+                                session_id: session_id.clone(),
+                                app_id: Uuid::new_v4().to_string(),
+                                application_name: app_name.clone(),
+                                current_screen_title: value.window_title.clone(),
+                                start_time: current_time,
+                                last_updated_time: current_time,
+                            };
+                            vacant_entry.insert(app_usage);
+                            previous_app_map.insert(app_name.clone(), app);
+                        }
+                    }
+                }
 
-                    (new_app, new_app_usage)
-                })
-                .unzip(); // Unzip into separate vectors for NewApp and NewAppUsage
+                previous_app_usage_map.retain(|key, _| modified_window_state.contains_key(key));
+                let after_retain_count = modified_window_state.len();
+                if before_retain_count != after_retain_count {
+                    if let Err(err) = tx
+                        .send((previous_app_map.clone(), previous_app_usage_map.clone()))
+                    {
+                        eprintln!("Failed to send data: {:?}", err);
+                        return;
+                    }
+                }
 
-        upsert_apps(pg_conn.clone(), new_apps).await;
-        upsert_app_usages(pg_conn.clone(), new_app_usages).await;
-        let duration = start.elapsed();
-        println!("Time elapsed in expensive_function() is: {:?}", duration);
-        let time_delay_for_function = 1000 - duration.as_millis();
-        let sleep_duration =
-            time::Duration::from_millis(time_delay_for_function.try_into().unwrap_or(1000));
-        let sleeper = SpinSleeper::new(1_000_000);
-        sleeper.sleep(sleep_duration);
+                let duration = start.elapsed();
+                println!("Time elapsed in expensive_function() is: {:?}", duration);
+                let time_delay_for_function = 1000 - duration.as_millis();
+                let sleep_duration =
+                    time::Duration::from_millis(time_delay_for_function.try_into().unwrap_or(1000));
+                tokio::time::sleep(sleep_duration).await;
+            } => {}
+        }
     }
 }
 
 #[tokio::main]
 async fn main() {
     if cfg!(target_os = "windows") {
-        let exe_path = env::current_exe().expect("Failed to get current executable path");
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let run_key = hkcu
-            .open_subkey_with_flags(
-                "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                KEY_WRITE,
-            )
-            .expect("Failed to open registry key");
-        run_key
-            .set_value("screen-time-tracker", &exe_path.to_str().unwrap())
-            .expect("Failed to set registry value");
-        let pg_conn = db::connection::connect();
-        let postgres_diesel = Arc::new(Mutex::new(pg_conn));
+        dotenv().ok();
+        let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        if let Some(public_dir) = dirs::public_dir() {
+            println!("Public Directory: {:?}", public_dir);
+        } else {
+            println!("Public directory could not be determined.");
+        }
+        let db_path = if db_url.contains("%AppData%") {
+            let app_data_path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+            db_url.replace("%AppData%", app_data_path.to_str().unwrap())
+        } else {
+            db_url
+        };
+        let db_path = PathBuf::from(db_path);
+        // Open the SQLite connection
+        let conn = Arc::new(Mutex::new(
+            Connection::open(&db_path).expect("Failed to open database connection"),
+        ));
+        println!("Database connection established at: {:?}", db_path);
+        let (ctrl_c_tx, ctrl_c_rx) = unbounded_channel::<()>();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle3 = tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.unwrap();
+            println!("Ctrl+C detected. Sending shutdown signal...");
+            let _ = ctrl_c_tx.send(());
+        });
+
         let session_id = Uuid::new_v4().to_string();
-        tokio::spawn(app(postgres_diesel.clone(), session_id))
-            .await
-            .unwrap();
+
+        let handle1 = tokio::spawn(track_application_usage(session_id.clone(), tx, ctrl_c_rx));
+        let handle2 = tokio::spawn(upset_app_usage(conn, rx));
+        let (r1, r2, _) = tokio::join!(handle1, handle2, handle3);
+        if let Err(err) = r1 {
+            eprintln!("Tracking task failed: {:?}", err);
+        }
+        if let Err(err) = r2 {
+            eprintln!("Database update task failed: {:?}", err);
+        }
     } else {
-        todo!()
+        eprintln!("This program is only supported on Windows.");
     }
 }
