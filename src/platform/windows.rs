@@ -1,4 +1,5 @@
 use anyhow::Result;
+use log::error;
 use std::collections::BTreeMap;
 use std::os::windows::prelude::*;
 use std::time::Duration;
@@ -24,6 +25,7 @@ use windows::Win32::{
 use crate::platform::WindowDetails;
 
 use super::Platform;
+
 pub struct WindowsHandle;
 
 impl Platform for WindowsHandle {
@@ -32,11 +34,11 @@ impl Platform for WindowsHandle {
         let state_ptr = Box::into_raw(state);
         let state;
         let result = unsafe { EnumWindows(Some(enumerate_windows), LPARAM(state_ptr as isize)) };
-        let _ = result.inspect_err(|e| {
-            eprintln!("Unable to get the window titles, {:?}", e);
-        });
+        if result.is_err() {
+            error!("Unable to get the window titles.");
+        }
         state = unsafe { Box::from_raw(state_ptr) };
-        return *state;
+        *state
     }
 
     fn get_last_input_info() -> Result<Duration, ()> {
@@ -46,28 +48,23 @@ impl Platform for WindowsHandle {
                 cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
                 dwTime: 0,
             };
-            let p_last_input_info = &mut last_input_info as *mut LASTINPUTINFO;
-
-            let time_ok = GetLastInputInfo(p_last_input_info);
-            match time_ok.as_bool() {
-                true => {
-                    let millis = now - last_input_info.dwTime;
-                    Ok(Duration::from_millis(millis as u64))
-                }
-                false => Err(()),
+            let time_ok = GetLastInputInfo(&mut last_input_info);
+            if !time_ok.as_bool() {
+                error!("Failed to retrieve the last input time.");
+                return Err(());
             }
+            let millis = now - last_input_info.dwTime;
+            Ok(Duration::from_millis(millis as u64))
         }
     }
 }
 
 fn get_process_name(current_window: HWND) -> Result<String, ()> {
     let length = unsafe { GetWindowTextLengthA(current_window) };
-
     let mut title: Vec<u8> = vec![0; (length + 1) as usize];
-    let _ = unsafe { GetWindowTextA(current_window, title.as_mut_slice()) };
+    let _ = unsafe { GetWindowTextA(current_window, &mut title) };
     let mut process_id: u32 = 0;
-
-    let _ = unsafe { GetWindowThreadProcessId(current_window, Some(&mut process_id)) };
+    unsafe { GetWindowThreadProcessId(current_window, Some(&mut process_id)) };
     let handle = unsafe {
         OpenProcess(
             PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
@@ -75,24 +72,23 @@ fn get_process_name(current_window: HWND) -> Result<String, ()> {
             process_id,
         )
     };
-
     let h = handle.map_err(|e| {
-        eprintln!("{:?}", e);
+        error!("Failed to open process: {:?}", e);
     })?;
-
     let mut buffer: [u16; 260] = [0; 260];
-
-    let result = unsafe { GetModuleFileNameExW(h, HINSTANCE::default(), buffer.as_mut_slice()) };
-
-    unsafe {
-        let _ = CloseHandle(h);
-    };
-
+    let result = unsafe { GetModuleFileNameExW(h, HINSTANCE::default(), &mut buffer) };
+    let _ = unsafe { CloseHandle(h) };
+    // if close_result.is_err() == false {
+    //     error!("Failed to close handle: {:?}", h);
+    // }
+    if result == 0 {
+        error!("Failed to retrieve the module file name.");
+        return Err(());
+    }
     let path = OsString::from_wide(&buffer[..result as usize])
         .to_string_lossy()
         .into_owned();
-
-    return Ok(path);
+    Ok(path)
 }
 
 fn get_app_name_from_path(path: &str) -> Option<String> {
@@ -106,54 +102,37 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
     if IsWindowVisible(window).as_bool() == false {
         return BOOL::from(true);
     }
-
     let mut rect = RECT::default();
     if GetWindowRect(window, &mut rect).is_err() {
+        error!("Failed to get window rectangle.");
         return BOOL::from(true);
     }
-
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
-
-    if rect.left <= -32000 && rect.top <= -32000 {
+    if rect.left <= -32000 && rect.top <= -32000 || width <= 1 || height <= 1 {
         return BOOL::from(true);
     }
-    if width <= 1 || height <= 1 {
-        return BOOL::from(true);
-    }
-
     let state = state.0 as *mut BTreeMap<String, WindowDetails>;
-
     let length = GetWindowTextLengthW(window);
     if length == 0 {
         return BOOL::from(true);
     }
-
     let mut title: Vec<u16> = vec![0; (length + 1) as usize];
     let text_len = GetWindowTextW(window, &mut title);
     if text_len > 0 {
         if let Ok(title) = String::from_utf16(&title[0..text_len as usize]) {
-            let path_name = get_process_name(window)
-                .inspect_err(|_| {
-                    eprintln!("unable to get process name");
-                })
-                .unwrap_or(String::from("Invalid path"));
-
-            let app_name = get_app_name_from_path(&path_name);
-            let app_name2 = if let Some(name) = app_name {
-                name
-            } else {
-                String::from("Invalid app name")
-            };
-
-            if title != "Windows Input Experience".to_owned()
-                || title != "Program Manager".to_owned()
-            {
+            let path_name = get_process_name(window).unwrap_or_else(|_| {
+                error!("Unable to get process name.");
+                "Invalid path".to_string()
+            });
+            let app_name = get_app_name_from_path(&path_name)
+                .unwrap_or_else(|| "Invalid app name".to_string());
+            if title != "Windows Input Experience" && title != "Program Manager" {
                 (*state).insert(
                     title.clone(),
                     WindowDetails {
                         window_title: title,
-                        app_name: Some(app_name2),
+                        app_name: Some(app_name),
                         app_path: Some(path_name),
                         is_active: false,
                     },

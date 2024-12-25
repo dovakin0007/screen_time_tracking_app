@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
+use log::error;
 
 use super::models::{App, AppUsage};
 
@@ -19,7 +20,7 @@ pub async fn upset_app_usage(
                  ON CONFLICT(name) DO UPDATE SET path = excluded.path;",
                 params![app.name, app.path],
             ) {
-                eprintln!("Error inserting or updating app '{}': {}", app_id, err);
+                error!("Error inserting or updating app '{}': {}", app_id, err);
             }
         }
 
@@ -27,7 +28,7 @@ pub async fn upset_app_usage(
             if let Err(err) = conn.execute(
                 "INSERT INTO app_usages (
                     id, session_id, application_name, current_screen_title, start_time,
-                    last_updated_time, foreground_start_time, foreground_last_updated_time
+                    last_updated_time
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(id) DO UPDATE SET
                     last_updated_time = excluded.last_updated_time;",
@@ -40,7 +41,7 @@ pub async fn upset_app_usage(
                     usage.last_updated_time,
                 ],
             ) {
-                eprintln!(
+                error!(
                     "Error inserting or updating app usage '{}': {}",
                     usage_id, err
                 );
