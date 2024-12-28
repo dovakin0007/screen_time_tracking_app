@@ -233,7 +233,7 @@ async fn track_application_usage(
     mut ctrl_c_recv: mpsc::UnboundedReceiver<()>,
 ) {
     let mut tracker = AppTracker::new(session_id);
-
+    let mut previous_state = None;
     loop {
         tokio::select! {
             Some(_) = ctrl_c_recv.recv() => {
@@ -246,13 +246,13 @@ async fn track_application_usage(
             _ = async {
                 let start = Instant::now();
                 let window_state = WindowStateManager::get_current_state();
-
-                tracker.update(&window_state);
-
-                if let Err(err) = tx.send(tracker.get_state()) {
-                    error!("Error sending updated data: {:?}", err);
+                if previous_state.as_ref() != Some(&window_state) {
+                    previous_state = Some(window_state.clone());
+                    tracker.update(&window_state);
+                    if let Err(err) = tx.send(tracker.get_state()) {
+                        error!("Error sending updated data: {:?}", err);
+                    }
                 }
-
                 let sleep_duration = TRACKING_INTERVAL_MS.saturating_sub(start.elapsed().as_millis() as u64);
                 tokio::time::sleep(Duration::from_millis(sleep_duration)).await;
             } => {}
