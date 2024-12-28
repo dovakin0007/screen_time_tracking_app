@@ -22,7 +22,6 @@ use db::connection::upset_app_usage;
 use db::models::{App, AppUsage};
 use platform::windows::{self, WindowsHandle};
 use platform::{Platform, WindowDetails};
-use windows_service::service::ServiceType;
 
 // Types
 type AppMap = HashMap<String, App>;
@@ -217,7 +216,8 @@ impl WindowStateManager {
 
 /// Database path resolution
 fn get_database_path() -> Result<PathBuf> {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or("%AppData%\\screen_time_tracking_app\\stop_procastinating.sqlite3".to_owned());
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or("%AppData%\\screen_time_tracking_app\\stop_procastinating.sqlite3".to_owned());
     Ok(if db_url.contains("%AppData%") {
         let app_data_path = dirs::config_dir().unwrap_or_else(|| Path::new(".").to_path_buf());
         PathBuf::from(db_url.replace("%AppData%", app_data_path.to_str().unwrap()))
@@ -259,11 +259,6 @@ async fn track_application_usage(
         }
     }
 }
-
-const SERVICE_NAME: &str = "screen_time_tracker";
-const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
-
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -313,4 +308,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
