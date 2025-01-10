@@ -121,20 +121,20 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
     let mut title: Vec<u16> = vec![0; (length + 1) as usize];
     let text_len = GetWindowTextW(window, &mut title);
     if text_len > 0 {
-        if let Ok(title) = String::from_utf16(&title[0..text_len as usize]) {
+        if let Ok(mut title) = String::from_utf16(&title[0..text_len as usize]) {
             let path_name = get_process_name(window).unwrap_or_else(|_| {
                 error!("Unable to get process name.");
                 "Invalid path".to_string()
             });
 
             let emoji_pattern = Regex::new(r"[\p{Emoji}]|●").unwrap();
-            let mut app_name = get_app_name_from_path(&path_name)
+            let app_name = get_app_name_from_path(&path_name)
                 .unwrap_or_else(|| "Invalid app name".to_string());
-            app_name = app_name
+            title = title
                 .graphemes(true)
                 .filter(|g| !emoji_pattern.is_match(g))
                 .collect::<String>();
-
+            println!("{}", title);
             if title != "Windows Input Experience" && title != "Program Manager" {
                 (*state).insert(
                     title.clone(),
