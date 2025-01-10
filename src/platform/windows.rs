@@ -130,10 +130,10 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
             let emoji_pattern = Regex::new(r"[\p{Emoji}]|●").unwrap();
             let app_name = get_app_name_from_path(&path_name)
                 .unwrap_or_else(|| "Invalid app name".to_string());
-            title = title
+            title = (&title
                 .graphemes(true)
                 .filter(|g| !emoji_pattern.is_match(g))
-                .collect::<String>();
+                .collect::<String>().trim()).to_string();
             if title != "Windows Input Experience" && title != "Program Manager" {
                 (*state).insert(
                     title.clone(),
