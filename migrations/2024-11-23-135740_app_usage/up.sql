@@ -5,5 +5,6 @@ CREATE TABLE app_usages (
     current_screen_title TEXT NOT NULL,
     start_time TIMESTAMP NOT NULL,
     last_updated_time TIMESTAMP NOT NULL,
-    FOREIGN KEY (application_name) REFERENCES apps (name)
+    FOREIGN KEY (application_name) REFERENCES apps (name),
+    FOREIGN KEY (session_id) REFERENCES sessions (id)
 );

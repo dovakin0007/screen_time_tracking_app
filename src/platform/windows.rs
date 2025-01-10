@@ -1,9 +1,11 @@
 use anyhow::Result;
 use log::error;
+use regex::Regex;
 use std::collections::BTreeMap;
 use std::os::windows::prelude::*;
 use std::time::Duration;
 use std::{ffi::OsString, path::Path};
+use unicode_segmentation::UnicodeSegmentation;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Foundation::{BOOL, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -78,9 +80,7 @@ fn get_process_name(current_window: HWND) -> Result<String, ()> {
     let mut buffer: [u16; 260] = [0; 260];
     let result = unsafe { GetModuleFileNameExW(h, HINSTANCE::default(), &mut buffer) };
     let _ = unsafe { CloseHandle(h) };
-    // if close_result.is_err() == false {
-    //     error!("Failed to close handle: {:?}", h);
-    // }
+
     if result == 0 {
         error!("Failed to retrieve the module file name.");
         return Err(());
@@ -107,6 +107,7 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
         error!("Failed to get window rectangle.");
         return BOOL::from(true);
     }
+
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
     if rect.left <= -32000 && rect.top <= -32000 || width <= 1 || height <= 1 {
@@ -125,8 +126,15 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                 error!("Unable to get process name.");
                 "Invalid path".to_string()
             });
-            let app_name = get_app_name_from_path(&path_name)
+
+            let emoji_pattern = Regex::new(r"[\p{Emoji}]|●").unwrap();
+            let mut app_name = get_app_name_from_path(&path_name)
                 .unwrap_or_else(|| "Invalid app name".to_string());
+            app_name = app_name
+                .graphemes(true)
+                .filter(|g| !emoji_pattern.is_match(g))
+                .collect::<String>();
+
             if title != "Windows Input Experience" && title != "Program Manager" {
                 (*state).insert(
                     title.clone(),

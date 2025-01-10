@@ -4,16 +4,16 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 
-use super::models::{App, AppUsage};
+use super::models::{App, AppUsage, Classification, Sessions};
 
-const APP_UPSERT_QUERY: &str = r#"
-    INSERT INTO apps (name, path) 
+const APP_UPSERT_QUERY: &'static str = r#"
+    INSERT INTO apps (name, path)
     VALUES (?1, ?2)
-    ON CONFLICT(name) DO UPDATE SET 
+    ON CONFLICT(name) DO UPDATE SET
         path = excluded.path
 "#;
 
-const USAGE_UPSERT_QUERY: &str = r#"
+const USAGE_UPSERT_QUERY: &'static str = r#"
     INSERT INTO app_usages (
         id, 
         session_id, 
@@ -25,6 +25,18 @@ const USAGE_UPSERT_QUERY: &str = r#"
     ON CONFLICT(id) DO UPDATE SET
         last_updated_time = excluded.last_updated_time
 "#;
+
+const SESSION_UPSET_QUERY: &'static str = r#"
+        INSERT INTO sessions (id, date)
+        VALUES (?1, ?2)
+    "#;
+
+const CLASSIFICATION_UPSET_QUERY: &'static str = r#"
+        INSERT INTO activity_classifications (application_name, current_screen_title, classification)
+        VALUES (?1, ?2, NULL)
+        ON CONFLICT(current_screen_title)
+        DO NOTHING;
+    "#;
 
 /// Database operations handler
 struct DbHandler {
@@ -77,6 +89,42 @@ impl DbHandler {
         }
         Ok(())
     }
+
+    async fn update_classifications(
+        &self,
+        classifications: &HashMap<String, Classification>,
+    ) -> SqliteResult<()> {
+        let conn = self.conn.lock().await;
+        for (usage_name, classification) in classifications {
+            match conn.execute(
+                CLASSIFICATION_UPSET_QUERY,
+                params![classification.name, classification.window_title],
+            ) {
+                Ok(_) => debug!("Successfully updated usage: {}", usage_name),
+                Err(err) => {
+                    error!("Error updating app usage '{}': {}", usage_name, err);
+                    return Err(err);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn update_session(&self, session: Sessions) -> SqliteResult<()> {
+        let conn = self.conn.lock().await;
+        println!("called");
+        match conn.execute(
+            SESSION_UPSET_QUERY,
+            params![session.session_id, session.session_date],
+        ) {
+            Ok(_) => debug!("Successfully updated session: {}", session.session_id),
+            Err(err) => {
+                error!("Error updating app usage '{}': {}", session.session_id, err);
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Metrics for database operations
@@ -84,41 +132,58 @@ impl DbHandler {
 struct DbMetrics {
     apps_count: usize,
     usages_count: usize,
+    classifications_count: usize,
     duration: std::time::Duration,
 }
 
 impl DbMetrics {
-    fn new(apps_count: usize, usages_count: usize, duration: std::time::Duration) -> Self {
+    fn new(
+        apps_count: usize,
+        usages_count: usize,
+        classifications_count: usize,
+        duration: std::time::Duration,
+    ) -> Self {
         Self {
             apps_count,
             usages_count,
+            classifications_count,
             duration,
         }
     }
 
     fn log(&self) {
         debug!(
-            "DB Update Metrics - Apps: {}, Usages: {}, Duration: {:?}",
-            self.apps_count, self.usages_count, self.duration
+            "DB Update Metrics - Apps: {}, Usages: {}, Classifications: {}, Duration: {:?}",
+            self.apps_count, self.usages_count, self.classifications_count, self.duration
         );
     }
 }
 
-/// Process database updates for apps and their usage
+/// Process database updates for apps, their usage, and classifications
 pub async fn upset_app_usage(
     conn: Arc<Mutex<Connection>>,
-    mut rx: mpsc::UnboundedReceiver<(HashMap<String, App>, HashMap<String, AppUsage>)>,
+    session: Sessions,
+    mut rx: mpsc::UnboundedReceiver<(
+        HashMap<String, App>,
+        HashMap<String, AppUsage>,
+        HashMap<String, Classification>,
+    )>,
 ) {
     let db_handler = DbHandler::new(conn);
-
-    while let Some((apps, app_usages)) = rx.recv().await {
+    let _ = db_handler.update_session(session).await;
+    while let Some((apps, app_usages, classifications)) = rx.recv().await {
         let start = Instant::now();
 
         // Process updates
-        let result = process_updates(&db_handler, &apps, &app_usages).await;
+        let result = process_updates(&db_handler, &apps, &app_usages, &classifications).await;
 
         // Log metrics
-        let metrics = DbMetrics::new(apps.len(), app_usages.len(), start.elapsed());
+        let metrics = DbMetrics::new(
+            apps.len(),
+            app_usages.len(),
+            classifications.len(),
+            start.elapsed(),
+        );
         metrics.log();
 
         // Handle any errors
@@ -133,9 +198,11 @@ async fn process_updates(
     db_handler: &DbHandler,
     apps: &HashMap<String, App>,
     app_usages: &HashMap<String, AppUsage>,
+    classifications: &HashMap<String, Classification>,
 ) -> SqliteResult<()> {
     // Update apps first as they are referenced by usages
     db_handler.update_apps(apps).await?;
     db_handler.update_app_usages(app_usages).await?;
+    db_handler.update_classifications(classifications).await?;
     Ok(())
 }

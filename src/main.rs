@@ -19,14 +19,15 @@ mod db;
 mod platform;
 
 use db::connection::upset_app_usage;
-use db::models::{App, AppUsage};
+use db::models::{App, AppUsage, Classification, Sessions};
 use platform::windows::{self, WindowsHandle};
 use platform::{Platform, WindowDetails};
 
 // Types
 type AppMap = HashMap<String, App>;
 type UsageMap = HashMap<String, AppUsage>;
-type AppData = (AppMap, UsageMap);
+type ClassificationMap = HashMap<String, Classification>;
+type AppData = (AppMap, UsageMap, ClassificationMap);
 type Sender = mpsc::UnboundedSender<AppData>;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -98,6 +99,7 @@ struct AppTracker {
     session_id: String,
     previous_app_map: AppMap,
     previous_app_usage_map: UsageMap,
+    previous_classification_map: ClassificationMap,
 }
 
 impl AppTracker {
@@ -106,11 +108,12 @@ impl AppTracker {
             session_id,
             previous_app_map: HashMap::new(),
             previous_app_usage_map: HashMap::new(),
+            previous_classification_map: HashMap::new(),
         }
     }
 
     fn update(&mut self, window_state: &BTreeMap<String, WindowDetails>) {
-        let current_time = Local::now().naive_utc();
+        let current_time = Local::now().naive_local();
 
         for (_, details) in window_state.iter() {
             let app_name = details
@@ -124,6 +127,7 @@ impl AppTracker {
 
             self.update_app(&app_name, &app_path);
             self.update_usage(&details.window_title, &app_name, current_time);
+            self.update_classification(&details.window_title, &app_name);
         }
 
         self.previous_app_usage_map
@@ -163,10 +167,20 @@ impl AppTracker {
         }
     }
 
+    fn update_classification(&mut self, window_title: &str, app_name: &str) {
+        self.previous_classification_map.insert(
+            window_title.to_owned(),
+            Classification {
+                name: app_name.to_owned(),
+                window_title: window_title.to_owned(),
+            },
+        );
+    }
     fn get_state(&self) -> AppData {
         (
             self.previous_app_map.clone(),
             self.previous_app_usage_map.clone(),
+            self.previous_classification_map.clone(),
         )
     }
 }
@@ -289,13 +303,16 @@ async fn main() -> Result<()> {
         tokio::signal::ctrl_c().await.unwrap();
         let _ = ctrl_c_tx.send(());
     });
-
+    let session = Sessions {
+        session_id: config.session_id.clone(),
+        session_date: Local::now().date_naive(),
+    };
     let tracking_task = tokio::spawn(track_application_usage(
         config.session_id.clone(),
         tx,
         ctrl_c_rx,
     ));
-    let db_task = tokio::spawn(upset_app_usage(conn, rx));
+    let db_task = tokio::spawn(upset_app_usage(conn, session, rx));
 
     let (tracking_res, db_res, _) = tokio::join!(tracking_task, db_task, signal_task);
 
