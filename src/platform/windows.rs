@@ -134,7 +134,6 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                 .graphemes(true)
                 .filter(|g| !emoji_pattern.is_match(g))
                 .collect::<String>();
-            println!("{}", title);
             if title != "Windows Input Experience" && title != "Program Manager" {
                 (*state).insert(
                     title.clone(),
