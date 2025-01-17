@@ -10,6 +10,10 @@ use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Foundation::{BOOL, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
+    GetWindowLongW,
+    GWL_EXSTYLE,
+    WS_EX_TOOLWINDOW,
+    WS_EX_ACCEPTFILES,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, FALSE, HINSTANCE, HWND},
@@ -25,7 +29,6 @@ use windows::Win32::{
 };
 
 use crate::platform::WindowDetails;
-
 use super::Platform;
 
 pub struct WindowsHandle;
@@ -98,10 +101,21 @@ fn get_app_name_from_path(path: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+// List of common system windows to filter out
+const FILTERED_WINDOWS: [&str; 6] = [
+    "Windows Input Experience",
+    "Program Manager",
+    "Settings",
+    "Microsoft Text Input Application",
+    "Windows Shell Experience Host",
+    "Application Frame Host",
+];
+
 unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL {
-    if IsWindowVisible(window).as_bool() == false {
+    if !IsWindowVisible(window).as_bool() {
         return BOOL::from(true);
     }
+
     let mut rect = RECT::default();
     if GetWindowRect(window, &mut rect).is_err() {
         error!("Failed to get window rectangle.");
@@ -110,14 +124,27 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
 
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
-    if rect.left <= -32000 && rect.top <= -32000 || width <= 1 || height <= 1 {
+    // Filter out small windows, tray windows, and potential popups
+    if rect.left <= -32000 || rect.top <= -32000
+        || width <= 100
+        || height <= 100
+        || (rect.top > 0 && height < 200)
+    {
         return BOOL::from(true);
     }
+
     let state = state.0 as *mut BTreeMap<String, WindowDetails>;
     let length = GetWindowTextLengthW(window);
     if length == 0 {
         return BOOL::from(true);
     }
+
+    let ex_style = GetWindowLongW(window, GWL_EXSTYLE);
+
+    if (ex_style & (WS_EX_TOOLWINDOW.0) as i32) != 0 {
+        return BOOL::from(true);
+    }
+
     let mut title: Vec<u16> = vec![0; (length + 1) as usize];
     let text_len = GetWindowTextW(window, &mut title);
     if text_len > 0 {
@@ -127,14 +154,29 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                 "Invalid path".to_string()
             });
 
-            let emoji_pattern = Regex::new(r"[\p{Emoji}]|●").unwrap();
+            // Filter out emojis, special characters, and non-ASCII characters
+            let emoji_pattern = Regex::new(r"[\p{Emoji}]|●|[^\x00-\x7F]").unwrap();
             let app_name = get_app_name_from_path(&path_name)
                 .unwrap_or_else(|| "Invalid app name".to_string());
+
             title = (&title
                 .graphemes(true)
                 .filter(|g| !emoji_pattern.is_match(g))
-                .collect::<String>().trim()).to_string();
-            if title != "Windows Input Experience" && title != "Program Manager" {
+                .collect::<String>()
+                .trim())
+                .to_string();
+
+            // Additional filtering conditions
+            if !title.is_empty() 
+                && !FILTERED_WINDOWS.contains(&title.as_str())
+                && !title.contains("notification")
+                && !title.contains("Notification")
+                && !title.starts_with("_")
+                && !title.contains("Task View")
+                && !title.contains("Start")
+                && !path_name.contains("SystemSettings.exe")
+                && !path_name.contains("ShellExperienceHost.exe")
+            {
                 (*state).insert(
                     title.clone(),
                     WindowDetails {
@@ -147,5 +189,7 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
             }
         }
     }
+
+
     BOOL::from(true)
 }
