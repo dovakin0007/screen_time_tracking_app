@@ -1,6 +1,5 @@
 use chrono::{NaiveDate, NaiveDateTime};
 
-// TODO: Add App Classification with unique names
 #[derive(Debug, Default, Clone)]
 pub struct App {
     pub name: String,
@@ -27,4 +26,15 @@ pub struct Classification {
 pub struct Sessions {
     pub session_id: String,
     pub session_date: NaiveDate,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct IdlePeriod {
+    pub id: String,
+    pub app_id: String,
+    pub session_id: String,
+    pub app_name: String,
+    pub start_time: NaiveDateTime,
+    pub end_time: NaiveDateTime,
+    pub idle_type: String,
 }

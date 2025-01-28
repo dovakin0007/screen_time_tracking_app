@@ -9,11 +9,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Foundation::{BOOL, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
-    GetWindowLongW,
-    GWL_EXSTYLE,
-    WS_EX_TOOLWINDOW,
-    WS_EX_ACCEPTFILES,
+    EnumWindows, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, FALSE, HINSTANCE, HWND},
@@ -28,8 +25,8 @@ use windows::Win32::{
     },
 };
 
-use crate::platform::WindowDetails;
 use super::Platform;
+use crate::platform::WindowDetails;
 
 pub struct WindowsHandle;
 
@@ -125,7 +122,8 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
     // Filter out small windows, tray windows, and potential popups
-    if rect.left <= -32000 || rect.top <= -32000
+    if rect.left <= -32000
+        || rect.top <= -32000
         || width <= 100
         || height <= 100
         || (rect.top > 0 && height < 200)
@@ -167,7 +165,7 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                 .to_string();
 
             // Additional filtering conditions
-            if !title.is_empty() 
+            if !title.is_empty()
                 && !FILTERED_WINDOWS.contains(&title.as_str())
                 && !title.contains("notification")
                 && !title.contains("Notification")
@@ -189,7 +187,6 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
             }
         }
     }
-
 
     BOOL::from(true)
 }

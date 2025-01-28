@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 
-use super::models::{App, AppUsage, Classification, Sessions};
+use super::models::{App, AppUsage, Classification, IdlePeriod, Sessions};
 
 const APP_UPSERT_QUERY: &'static str = r#"
     INSERT INTO apps (name, path)
@@ -112,7 +112,6 @@ impl DbHandler {
 
     async fn update_session(&self, session: Sessions) -> SqliteResult<()> {
         let conn = self.conn.lock().await;
-        println!("called");
         match conn.execute(
             SESSION_UPSET_QUERY,
             params![session.session_id, session.session_date],
@@ -125,6 +124,36 @@ impl DbHandler {
         }
         Ok(())
     }
+
+    async fn update_idle_periods(
+        &self,
+        idle_periods: &HashMap<String, IdlePeriod>,
+    ) -> SqliteResult<()> {
+        let conn = self.conn.lock().await;
+
+        for idle_period in idle_periods.values() {
+            // Ensure referenced rows exist
+
+            // Insert into idle_periods
+            conn.execute(
+                r#"INSERT INTO idle_periods (id, app_id, session_id, app_name, start_time, end_time, idle_type)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(id) DO UPDATE SET
+                    end_time = excluded.end_time"#,
+                params![
+                    idle_period.id,
+                    idle_period.app_id,
+                    idle_period.session_id,
+                    idle_period.app_name,
+                    idle_period.start_time,
+                    idle_period.end_time,
+                    idle_period.idle_type,
+                ],
+            )?;
+        }
+        println!("worked");
+        Ok(())
+    }
 }
 
 /// Metrics for database operations
@@ -133,6 +162,7 @@ struct DbMetrics {
     apps_count: usize,
     usages_count: usize,
     classifications_count: usize,
+    idle_state_count: usize,
     duration: std::time::Duration,
 }
 
@@ -141,47 +171,58 @@ impl DbMetrics {
         apps_count: usize,
         usages_count: usize,
         classifications_count: usize,
+        idle_state_count: usize,
         duration: std::time::Duration,
     ) -> Self {
         Self {
             apps_count,
             usages_count,
             classifications_count,
+            idle_state_count,
             duration,
         }
     }
 
     fn log(&self) {
         debug!(
-            "DB Update Metrics - Apps: {}, Usages: {}, Classifications: {}, Duration: {:?}",
-            self.apps_count, self.usages_count, self.classifications_count, self.duration
+            "DB Update Metrics - Apps: {}, Usages: {}, Classifications: {}, Idle: {}, Duration: {:?}",
+            self.apps_count, self.usages_count, self.classifications_count, self.idle_state_count, self.duration
         );
     }
 }
 
 /// Process database updates for apps, their usage, and classifications
-pub async fn upset_app_usage(
+pub async fn upsert_app_usage(
     conn: Arc<Mutex<Connection>>,
     session: Sessions,
     mut rx: mpsc::UnboundedReceiver<(
         HashMap<String, App>,
         HashMap<String, AppUsage>,
         HashMap<String, Classification>,
+        HashMap<String, IdlePeriod>, // Added idle periods
     )>,
 ) {
     let db_handler = DbHandler::new(conn);
     let _ = db_handler.update_session(session).await;
-    while let Some((apps, app_usages, classifications)) = rx.recv().await {
+    while let Some((apps, app_usages, classifications, idle_periods)) = rx.recv().await {
         let start = Instant::now();
 
         // Process updates
-        let result = process_updates(&db_handler, &apps, &app_usages, &classifications).await;
+        let result = process_updates(
+            &db_handler,
+            &apps,
+            &app_usages,
+            &classifications,
+            &idle_periods,
+        )
+        .await;
 
         // Log metrics
         let metrics = DbMetrics::new(
             apps.len(),
             app_usages.len(),
             classifications.len(),
+            idle_periods.len(), // Added to metrics
             start.elapsed(),
         );
         metrics.log();
@@ -199,10 +240,17 @@ async fn process_updates(
     apps: &HashMap<String, App>,
     app_usages: &HashMap<String, AppUsage>,
     classifications: &HashMap<String, Classification>,
+    idle_periods: &HashMap<String, IdlePeriod>, // Added idle periods
 ) -> SqliteResult<()> {
     // Update apps first as they are referenced by usages
+    println!(
+        "app usage {:?},\n idle periods{:?}",
+        app_usages, idle_periods
+    );
     db_handler.update_apps(apps).await?;
     db_handler.update_app_usages(app_usages).await?;
     db_handler.update_classifications(classifications).await?;
+
+    db_handler.update_idle_periods(idle_periods).await?; // Added idle period updates
     Ok(())
 }

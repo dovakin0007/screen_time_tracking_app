@@ -18,8 +18,8 @@ use uuid::Uuid;
 mod db;
 mod platform;
 
-use db::connection::upset_app_usage;
-use db::models::{App, AppUsage, Classification, Sessions};
+use db::connection::upsert_app_usage;
+use db::models::{App, AppUsage, Classification, IdlePeriod, Sessions};
 use platform::windows::{self, WindowsHandle};
 use platform::{Platform, WindowDetails};
 
@@ -27,12 +27,13 @@ use platform::{Platform, WindowDetails};
 type AppMap = HashMap<String, App>;
 type UsageMap = HashMap<String, AppUsage>;
 type ClassificationMap = HashMap<String, Classification>;
-type AppData = (AppMap, UsageMap, ClassificationMap);
+type IdleMap = HashMap<String, IdlePeriod>;
+type AppData = (AppMap, UsageMap, ClassificationMap, IdleMap);
 type Sender = mpsc::UnboundedSender<AppData>;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 // Constants
-const IDLE_THRESHOLD_SECS: u64 = 300;
+const IDLE_THRESHOLD_SECS: u64 = 30;
 const TRACKING_INTERVAL_MS: u64 = 1000;
 
 /// Application configuration structure
@@ -62,7 +63,7 @@ impl Config {
 struct Logger;
 
 impl Logger {
-    fn initialize(log_path: &Path) {
+    fn initialize(_: &Path) {
         let mut binding = Builder::from_default_env();
         let builder = binding.format(|buf, record| {
             writeln!(
@@ -76,7 +77,7 @@ impl Logger {
 
         #[cfg(debug_assertions)]
         {
-            builder.filter(None, log::LevelFilter::Debug).init();
+            builder.filter(None, log::LevelFilter::Error).init();
             info!("Debug mode: Logging to console.");
         }
 
@@ -100,6 +101,7 @@ struct AppTracker {
     previous_app_map: AppMap,
     previous_app_usage_map: UsageMap,
     previous_classification_map: ClassificationMap,
+    previous_idle_map: IdleMap,
 }
 
 impl AppTracker {
@@ -109,6 +111,7 @@ impl AppTracker {
             previous_app_map: HashMap::new(),
             previous_app_usage_map: HashMap::new(),
             previous_classification_map: HashMap::new(),
+            previous_idle_map: HashMap::new(),
         }
     }
 
@@ -132,6 +135,8 @@ impl AppTracker {
 
         self.previous_app_usage_map
             .retain(|key, _| window_state.contains_key(key));
+        self.previous_idle_map
+            .retain(|key, _| window_state.contains_key(key));
     }
 
     fn update_app(&mut self, app_name: &str, app_path: &str) {
@@ -150,19 +155,47 @@ impl AppTracker {
         app_name: &str,
         current_time: chrono::NaiveDateTime,
     ) {
+        let mut app_id = Uuid::new_v4().to_string();
+        let idle_time_secs = WindowsHandle::get_last_input_info()
+            .unwrap_or_default()
+            .as_secs();
+
         match self.previous_app_usage_map.entry(window_title.to_string()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().last_updated_time = current_time;
+                app_id = entry.get().app_id.clone();
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(AppUsage {
                     session_id: self.session_id.clone(),
-                    app_id: Uuid::new_v4().to_string(),
+                    app_id: app_id.clone(),
                     application_name: app_name.to_string(),
                     current_screen_title: window_title.to_string(),
                     start_time: current_time,
                     last_updated_time: current_time,
                 });
+            }
+        }
+
+        if idle_time_secs > IDLE_THRESHOLD_SECS {
+            match self.previous_idle_map.entry(window_title.to_owned()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    // Update existing idle period's end time
+                    entry.get_mut().end_time = current_time;
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Create new idle period
+                    let idle_period = IdlePeriod {
+                        app_id: app_id.clone(),
+                        session_id: self.session_id.clone(),
+                        app_name: app_name.to_string(),
+                        start_time: current_time,
+                        end_time: current_time,
+                        idle_type: "user_inactive".to_string(),
+                        id: app_id,
+                    };
+                    entry.insert(idle_period);
+                }
             }
         }
     }
@@ -181,7 +214,17 @@ impl AppTracker {
             self.previous_app_map.clone(),
             self.previous_app_usage_map.clone(),
             self.previous_classification_map.clone(),
+            self.previous_idle_map.clone(),
         )
+    }
+
+    fn reset_idle_map(&mut self) {
+        let idle_time_secs = WindowsHandle::get_last_input_info()
+            .unwrap_or_default()
+            .as_secs();
+        if idle_time_secs < IDLE_THRESHOLD_SECS && self.previous_idle_map.is_empty() == false {
+            self.previous_idle_map.clear();
+        }
     }
 }
 
@@ -194,7 +237,6 @@ impl WindowStateManager {
         let idle_time_secs = WindowsHandle::get_last_input_info()
             .unwrap_or_default()
             .as_secs();
-
         if idle_time_secs >= IDLE_THRESHOLD_SECS {
             Self::augment_with_idle_state(window_state)
         } else {
@@ -208,7 +250,7 @@ impl WindowStateManager {
         if let Some(first_entry) = window_state.first_entry() {
             let value = first_entry.get().clone();
             let key = format!(
-                "Idle Time{}",
+                "Idle Time - {}",
                 value
                     .app_name
                     .clone()
@@ -248,6 +290,9 @@ async fn track_application_usage(
 ) {
     let mut tracker = AppTracker::new(session_id);
     let mut previous_state = None;
+    let mut last_db_update = Instant::now();
+    const DB_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
+
     loop {
         tokio::select! {
             Some(_) = ctrl_c_recv.recv() => {
@@ -260,13 +305,34 @@ async fn track_application_usage(
             _ = async {
                 let start = Instant::now();
                 let window_state = WindowStateManager::get_current_state();
+
+                let mut should_update = false;
+
+
+                // Update tracker if state changed
                 if previous_state.as_ref() != Some(&window_state) {
                     previous_state = Some(window_state.clone());
                     tracker.update(&window_state);
+                    should_update = true;
+                }
+
+                // Check if 30 seconds have elapsed
+                if start.duration_since(last_db_update) >= DB_UPDATE_INTERVAL {
+                    previous_state = Some(window_state.clone());
+                    tracker.update(&window_state);
+                    should_update = true;
+                }
+
+
+                // Send update if either condition is met
+                if should_update {
                     if let Err(err) = tx.send(tracker.get_state()) {
                         error!("Error sending updated data: {:?}", err);
                     }
+                    tracker.reset_idle_map();
+                    last_db_update = start;
                 }
+
                 let sleep_duration = TRACKING_INTERVAL_MS.saturating_sub(start.elapsed().as_millis() as u64);
                 tokio::time::sleep(Duration::from_millis(sleep_duration)).await;
             } => {}
@@ -312,7 +378,7 @@ async fn main() -> Result<()> {
         tx,
         ctrl_c_rx,
     ));
-    let db_task = tokio::spawn(upset_app_usage(conn, session, rx));
+    let db_task = tokio::spawn(upsert_app_usage(conn, session, rx));
 
     let (tracking_res, db_res, _) = tokio::join!(tracking_task, db_task, signal_task);
 
