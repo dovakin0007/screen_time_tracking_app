@@ -63,7 +63,7 @@ impl Config {
 struct Logger;
 
 impl Logger {
-    fn initialize(_: &Path) {
+    fn initialize(log_path: &Path) {
         let mut binding = Builder::from_default_env();
         let builder = binding.format(|buf, record| {
             writeln!(
@@ -191,8 +191,7 @@ impl AppTracker {
                         app_name: app_name.to_string(),
                         start_time: current_time,
                         end_time: current_time,
-                        idle_type: "user_inactive".to_string(),
-                        id: app_id,
+                        id: Uuid::new_v4().to_string(),
                     };
                     entry.insert(idle_period);
                 }
@@ -308,6 +307,9 @@ async fn track_application_usage(
 
                 let mut should_update = false;
 
+                let idle_time_secs = WindowsHandle::get_last_input_info()
+                .unwrap_or_default()
+                .as_secs();
 
                 // Update tracker if state changed
                 if previous_state.as_ref() != Some(&window_state) {
@@ -317,7 +319,7 @@ async fn track_application_usage(
                 }
 
                 // Check if 30 seconds have elapsed
-                if start.duration_since(last_db_update) >= DB_UPDATE_INTERVAL {
+                if start.duration_since(last_db_update) >= DB_UPDATE_INTERVAL || idle_time_secs > IDLE_THRESHOLD_SECS  {
                     previous_state = Some(window_state.clone());
                     tracker.update(&window_state);
                     should_update = true;

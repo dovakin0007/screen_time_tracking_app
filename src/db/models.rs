@@ -36,5 +36,4 @@ pub struct IdlePeriod {
     pub app_name: String,
     pub start_time: NaiveDateTime,
     pub end_time: NaiveDateTime,
-    pub idle_type: String,
 }

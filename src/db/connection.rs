@@ -133,13 +133,12 @@ impl DbHandler {
 
         for idle_period in idle_periods.values() {
             // Ensure referenced rows exist
-
             // Insert into idle_periods
             conn.execute(
-                r#"INSERT INTO idle_periods (id, app_id, session_id, app_name, start_time, end_time, idle_type)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                r#"INSERT INTO idle_periods (id, app_id, session_id, app_name, start_time, end_time)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT(id) DO UPDATE SET
-                    end_time = excluded.end_time"#,
+                end_time = excluded.end_time"#,
                 params![
                     idle_period.id,
                     idle_period.app_id,
@@ -147,11 +146,9 @@ impl DbHandler {
                     idle_period.app_name,
                     idle_period.start_time,
                     idle_period.end_time,
-                    idle_period.idle_type,
                 ],
             )?;
         }
-        println!("worked");
         Ok(())
     }
 }
@@ -243,10 +240,6 @@ async fn process_updates(
     idle_periods: &HashMap<String, IdlePeriod>, // Added idle periods
 ) -> SqliteResult<()> {
     // Update apps first as they are referenced by usages
-    println!(
-        "app usage {:?},\n idle periods{:?}",
-        app_usages, idle_periods
-    );
     db_handler.update_apps(apps).await?;
     db_handler.update_app_usages(app_usages).await?;
     db_handler.update_classifications(classifications).await?;
