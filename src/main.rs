@@ -7,16 +7,22 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Local;
+use config::Config;
 use dirs;
 use dotenvy::dotenv;
 use env_logger::Builder;
 use log::{error, info};
+use logger::Logger;
 use rusqlite::Connection;
 use tokio::sync::{mpsc, Mutex};
+use tracker::{AppTracker, WindowStateManager};
 use uuid::Uuid;
 
+pub mod config;
 mod db;
+pub mod logger;
 mod platform;
+pub mod tracker;
 
 use db::connection::upsert_app_usage;
 use db::models::{App, AppUsage, Classification, IdlePeriod, Sessions};
@@ -35,239 +41,6 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 // Constants
 const IDLE_THRESHOLD_SECS: u64 = 30;
 const TRACKING_INTERVAL_MS: u64 = 1000;
-
-/// Application configuration structure
-struct Config {
-    session_id: String,
-    db_path: PathBuf,
-    log_path: PathBuf,
-}
-
-impl Config {
-    fn new() -> Result<Self> {
-        let db_path = get_database_path()?;
-        let log_path = db_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("application.log");
-
-        Ok(Config {
-            session_id: Uuid::new_v4().to_string(),
-            db_path,
-            log_path,
-        })
-    }
-}
-
-/// Logger configuration and initialization
-struct Logger;
-
-impl Logger {
-    fn initialize(log_path: &Path) {
-        let mut binding = Builder::from_default_env();
-        let builder = binding.format(|buf, record| {
-            writeln!(
-                buf,
-                "{} [{}] - {}",
-                Local::now().format("%Y-%m-%d %H:%M:%S"),
-                record.level(),
-                record.args()
-            )
-        });
-
-        #[cfg(debug_assertions)]
-        {
-            builder.filter(None, log::LevelFilter::Error).init();
-            info!("Debug mode: Logging to console.");
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
-            let log_file = std::fs::File::create(log_path).unwrap_or_else(|err| {
-                panic!("Failed to create log file at {:?}: {:?}", log_path, err);
-            });
-            builder
-                .target(env_logger::Target::Pipe(Box::new(log_file)))
-                .filter(None, log::LevelFilter::Debug)
-                .init();
-            println!("Release mode: Logging to file at {:?}", log_path);
-        }
-    }
-}
-
-/// Application state tracker
-struct AppTracker {
-    session_id: String,
-    previous_app_map: AppMap,
-    previous_app_usage_map: UsageMap,
-    previous_classification_map: ClassificationMap,
-    previous_idle_map: IdleMap,
-}
-
-impl AppTracker {
-    fn new(session_id: String) -> Self {
-        Self {
-            session_id,
-            previous_app_map: HashMap::new(),
-            previous_app_usage_map: HashMap::new(),
-            previous_classification_map: HashMap::new(),
-            previous_idle_map: HashMap::new(),
-        }
-    }
-
-    fn update(&mut self, window_state: &BTreeMap<String, WindowDetails>) {
-        let current_time = Local::now().naive_local();
-
-        for (_, details) in window_state.iter() {
-            let app_name = details
-                .app_name
-                .clone()
-                .unwrap_or_else(|| "Unknown App".to_string());
-            let app_path = details
-                .app_path
-                .clone()
-                .unwrap_or_else(|| "Unknown Path".to_string());
-
-            self.update_app(&app_name, &app_path);
-            self.update_usage(&details.window_title, &app_name, current_time);
-            self.update_classification(&details.window_title, &app_name);
-        }
-
-        self.previous_app_usage_map
-            .retain(|key, _| window_state.contains_key(key));
-        self.previous_idle_map
-            .retain(|key, _| window_state.contains_key(key));
-    }
-
-    fn update_app(&mut self, app_name: &str, app_path: &str) {
-        self.previous_app_map.insert(
-            app_name.to_string(),
-            App {
-                name: app_name.to_string(),
-                path: app_path.to_string(),
-            },
-        );
-    }
-
-    fn update_usage(
-        &mut self,
-        window_title: &str,
-        app_name: &str,
-        current_time: chrono::NaiveDateTime,
-    ) {
-        let mut app_id = Uuid::new_v4().to_string();
-        let idle_time_secs = WindowsHandle::get_last_input_info()
-            .unwrap_or_default()
-            .as_secs();
-
-        match self.previous_app_usage_map.entry(window_title.to_string()) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().last_updated_time = current_time;
-                app_id = entry.get().app_id.clone();
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(AppUsage {
-                    session_id: self.session_id.clone(),
-                    app_id: app_id.clone(),
-                    application_name: app_name.to_string(),
-                    current_screen_title: window_title.to_string(),
-                    start_time: current_time,
-                    last_updated_time: current_time,
-                });
-            }
-        }
-
-        if idle_time_secs > IDLE_THRESHOLD_SECS {
-            match self.previous_idle_map.entry(window_title.to_owned()) {
-                std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    // Update existing idle period's end time
-                    entry.get_mut().end_time = current_time;
-                }
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Create new idle period
-                    let idle_period = IdlePeriod {
-                        app_id: app_id.clone(),
-                        session_id: self.session_id.clone(),
-                        app_name: app_name.to_string(),
-                        start_time: current_time,
-                        end_time: current_time,
-                        id: Uuid::new_v4().to_string(),
-                    };
-                    entry.insert(idle_period);
-                }
-            }
-        }
-    }
-
-    fn update_classification(&mut self, window_title: &str, app_name: &str) {
-        self.previous_classification_map.insert(
-            window_title.to_owned(),
-            Classification {
-                name: app_name.to_owned(),
-                window_title: window_title.to_owned(),
-            },
-        );
-    }
-    fn get_state(&self) -> AppData {
-        (
-            self.previous_app_map.clone(),
-            self.previous_app_usage_map.clone(),
-            self.previous_classification_map.clone(),
-            self.previous_idle_map.clone(),
-        )
-    }
-
-    fn reset_idle_map(&mut self) {
-        let idle_time_secs = WindowsHandle::get_last_input_info()
-            .unwrap_or_default()
-            .as_secs();
-        if idle_time_secs < IDLE_THRESHOLD_SECS && self.previous_idle_map.is_empty() == false {
-            self.previous_idle_map.clear();
-        }
-    }
-}
-
-/// Window state management
-struct WindowStateManager;
-
-impl WindowStateManager {
-    fn get_current_state() -> BTreeMap<String, WindowDetails> {
-        let window_state = windows::WindowsHandle::get_window_titles();
-        let idle_time_secs = WindowsHandle::get_last_input_info()
-            .unwrap_or_default()
-            .as_secs();
-        if idle_time_secs >= IDLE_THRESHOLD_SECS {
-            Self::augment_with_idle_state(window_state)
-        } else {
-            window_state
-        }
-    }
-
-    fn augment_with_idle_state(
-        mut window_state: BTreeMap<String, WindowDetails>,
-    ) -> BTreeMap<String, WindowDetails> {
-        if let Some(first_entry) = window_state.first_entry() {
-            let value = first_entry.get().clone();
-            let key = format!(
-                "Idle Time - {}",
-                value
-                    .app_name
-                    .clone()
-                    .unwrap_or_else(|| "Unknown app".to_string())
-            );
-            window_state.insert(
-                key,
-                WindowDetails {
-                    window_title: "Idle".to_owned(),
-                    app_name: value.app_name,
-                    app_path: value.app_path,
-                    is_active: false,
-                },
-            );
-        }
-        window_state
-    }
-}
 
 /// Database path resolution
 fn get_database_path() -> Result<PathBuf> {
