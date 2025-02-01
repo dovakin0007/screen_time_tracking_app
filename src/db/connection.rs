@@ -48,68 +48,6 @@ impl DbHandler {
         Self { conn }
     }
 
-    /// Update app information in the database
-    async fn update_apps(&self, apps: &HashMap<String, App>) -> SqliteResult<()> {
-        let conn = self.conn.lock().await;
-
-        for (app_id, app) in apps {
-            match conn.execute(APP_UPSERT_QUERY, params![app.name, app.path]) {
-                Ok(_) => debug!("Successfully updated app: {}", app_id),
-                Err(err) => {
-                    error!("Error updating app '{}': {}", app_id, err);
-                    return Err(err);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Update app usage information in the database
-    async fn update_app_usages(&self, app_usages: &HashMap<String, AppUsage>) -> SqliteResult<()> {
-        let conn = self.conn.lock().await;
-
-        for (usage_id, usage) in app_usages {
-            match conn.execute(
-                USAGE_UPSERT_QUERY,
-                params![
-                    usage.app_id,
-                    usage.session_id,
-                    usage.application_name,
-                    usage.current_screen_title,
-                    usage.start_time,
-                    usage.last_updated_time,
-                ],
-            ) {
-                Ok(_) => debug!("Successfully updated usage: {}", usage_id),
-                Err(err) => {
-                    error!("Error updating app usage '{}': {}", usage_id, err);
-                    return Err(err);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn update_classifications(
-        &self,
-        classifications: &HashMap<String, Classification>,
-    ) -> SqliteResult<()> {
-        let conn = self.conn.lock().await;
-        for (usage_name, classification) in classifications {
-            match conn.execute(
-                CLASSIFICATION_UPSET_QUERY,
-                params![classification.name, classification.window_title],
-            ) {
-                Ok(_) => debug!("Successfully updated usage: {}", usage_name),
-                Err(err) => {
-                    error!("Error updating app usage '{}': {}", usage_name, err);
-                    return Err(err);
-                }
-            }
-        }
-        Ok(())
-    }
-
     async fn update_session(&self, session: Sessions) -> SqliteResult<()> {
         let conn = self.conn.lock().await;
         match conn.execute(
@@ -121,33 +59,6 @@ impl DbHandler {
                 error!("Error updating app usage '{}': {}", session.session_id, err);
                 return Err(err);
             }
-        }
-        Ok(())
-    }
-
-    async fn update_idle_periods(
-        &self,
-        idle_periods: &HashMap<String, IdlePeriod>,
-    ) -> SqliteResult<()> {
-        let conn = self.conn.lock().await;
-
-        for idle_period in idle_periods.values() {
-            // Ensure referenced rows exist
-            // Insert into idle_periods
-            conn.execute(
-                r#"INSERT INTO idle_periods (id, app_id, session_id, app_name, start_time, end_time)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                ON CONFLICT(id) DO UPDATE SET
-                end_time = excluded.end_time"#,
-                params![
-                    idle_period.id,
-                    idle_period.app_id,
-                    idle_period.session_id,
-                    idle_period.app_name,
-                    idle_period.start_time,
-                    idle_period.end_time,
-                ],
-            )?;
         }
         Ok(())
     }
@@ -231,19 +142,108 @@ pub async fn upsert_app_usage(
     }
 }
 
-/// Process both app and usage updates in a single transaction
 async fn process_updates(
     db_handler: &DbHandler,
     apps: &HashMap<String, App>,
     app_usages: &HashMap<String, AppUsage>,
     classifications: &HashMap<String, Classification>,
-    idle_periods: &HashMap<String, IdlePeriod>, // Added idle periods
+    idle_periods: &HashMap<String, IdlePeriod>,
 ) -> SqliteResult<()> {
-    // Update apps first as they are referenced by usages
-    db_handler.update_apps(apps).await?;
-    db_handler.update_app_usages(app_usages).await?;
-    db_handler.update_classifications(classifications).await?;
+    debug!("Starting batch database update process");
+    let start = std::time::Instant::now();
 
-    db_handler.update_idle_periods(idle_periods).await?; // Added idle period updates
+    let mut conn = db_handler.conn.lock().await;
+    debug!("Database connection locked");
+
+    let tx = conn.transaction()?;
+    debug!("Transaction started");
+
+    debug!("Processing {} apps", apps.len());
+    for (_, app) in apps {
+        match tx.execute(APP_UPSERT_QUERY, params![app.name, app.path]) {
+            Ok(_) => debug!("Successfully upserted app: {}", app.name),
+            Err(err) => {
+                error!("Failed to upsert app '{}': {}", app.name, err);
+                return Err(err);
+            }
+        }
+    }
+
+    debug!("Processing {} app usages", app_usages.len());
+    for (_, usage) in app_usages {
+        match tx.execute(
+            USAGE_UPSERT_QUERY,
+            params![
+                usage.app_id,
+                usage.session_id,
+                usage.application_name,
+                usage.current_screen_title,
+                usage.start_time,
+                usage.last_updated_time,
+            ],
+        ) {
+            Ok(_) => debug!("Successfully upserted usage for app: {}", usage.application_name),
+            Err(err) => {
+                error!("Failed to upsert usage for '{}': {}", usage.application_name, err);
+                return Err(err);
+            }
+        }
+    }
+
+    debug!("Processing {} classifications", classifications.len());
+    for (_, classification) in classifications {
+        match tx.execute(
+            CLASSIFICATION_UPSET_QUERY,
+            params![classification.name, classification.window_title],
+        ) {
+            Ok(_) => debug!("Successfully upserted classification for: {}", classification.name),
+            Err(err) => {
+                error!("Failed to upsert classification for '{}': {}", classification.name, err);
+                return Err(err);
+            }
+        }
+    }
+
+    debug!("Processing {} idle periods", idle_periods.len());
+    for idle_period in idle_periods.values() {
+        match tx.execute(
+            r#"INSERT INTO idle_periods (id, app_id, session_id, app_name, start_time, end_time)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(id) DO UPDATE SET
+            end_time = excluded.end_time"#,
+            params![
+                idle_period.id,
+                idle_period.app_id,
+                idle_period.session_id,
+                idle_period.app_name,
+                idle_period.start_time,
+                idle_period.end_time,
+            ],
+        ) {
+            Ok(_) => debug!("Successfully upserted idle period for app: {}", idle_period.app_name),
+            Err(err) => {
+                error!("Failed to upsert idle period for '{}': {}", idle_period.app_name, err);
+                return Err(err);
+            }
+        }
+    }
+
+    match tx.commit() {
+        Ok(_) => debug!("Transaction successfully committed"),
+        Err(err) => {
+            error!("Failed to commit transaction: {}", err);
+            return Err(err);
+        }
+    }
+
+    debug!(
+        "Batch update completed in {:?}. Processed: {} apps, {} usages, {} classifications, {} idle periods",
+        start.elapsed(),
+        apps.len(),
+        app_usages.len(),
+        classifications.len(),
+        idle_periods.len()
+    );
+
     Ok(())
 }
