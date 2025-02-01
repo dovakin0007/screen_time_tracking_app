@@ -8,3 +8,6 @@ CREATE TABLE app_usages (
     FOREIGN KEY (application_name) REFERENCES apps (name),
     FOREIGN KEY (session_id) REFERENCES sessions (id)
 );
+
+CREATE INDEX idx_app_usages_start_time ON app_usages (start_time);
+CREATE INDEX idx_app_usages_last_updated_time ON app_usages (last_updated_time);

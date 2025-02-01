@@ -9,3 +9,6 @@ CREATE TABLE idle_periods (
     FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE, -- Ensures referential integrity with sessions table
     FOREIGN KEY (app_name) REFERENCES apps (name) ON DELETE CASCADE -- Ensures referential integrity with apps table
 );
+
+-- Time-based queries (common for time ranges)
+CREATE INDEX idx_idle_periods_start_end_time ON idle_periods (start_time, end_time);
