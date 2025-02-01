@@ -1,7 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::{BTreeMap, HashMap};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,13 +8,11 @@ use chrono::Local;
 use config::Config;
 use dirs;
 use dotenvy::dotenv;
-use env_logger::Builder;
 use log::{error, info};
 use logger::Logger;
 use rusqlite::Connection;
 use tokio::sync::{mpsc, Mutex};
-use tracker::{AppTracker, WindowStateManager};
-use uuid::Uuid;
+use tracker::{AppData, AppTracker, WindowStateManager};
 
 pub mod config;
 mod db;
@@ -25,24 +21,16 @@ mod platform;
 pub mod tracker;
 
 use db::connection::upsert_app_usage;
-use db::models::{App, AppUsage, Classification, IdlePeriod, Sessions};
-use platform::windows::{self, WindowsHandle};
-use platform::{Platform, WindowDetails};
+use db::models::Sessions;
+use platform::windows::WindowsHandle;
+use platform::Platform;
+use tracker::Result;
 
-// Types
-type AppMap = HashMap<String, App>;
-type UsageMap = HashMap<String, AppUsage>;
-type ClassificationMap = HashMap<String, Classification>;
-type IdleMap = HashMap<String, IdlePeriod>;
-type AppData = (AppMap, UsageMap, ClassificationMap, IdleMap);
 type Sender = mpsc::UnboundedSender<AppData>;
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-// Constants
 const IDLE_THRESHOLD_SECS: u64 = 30;
 const TRACKING_INTERVAL_MS: u64 = 1000;
 
-/// Database path resolution
 fn get_database_path() -> Result<PathBuf> {
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or("%AppData%\\screen_time_tracking_app\\stop_procastinating.sqlite3".to_owned());
@@ -54,7 +42,6 @@ fn get_database_path() -> Result<PathBuf> {
     })
 }
 
-/// Main tracking loop
 async fn track_application_usage(
     session_id: String,
     tx: Sender,
@@ -84,14 +71,12 @@ async fn track_application_usage(
                 .unwrap_or_default()
                 .as_secs();
 
-                // Update tracker if state changed
                 if previous_state.as_ref() != Some(&window_state) {
                     previous_state = Some(window_state.clone());
                     tracker.update(&window_state);
                     should_update = true;
                 }
 
-                // Check if 30 seconds have elapsed
                 if start.duration_since(last_db_update) >= DB_UPDATE_INTERVAL || idle_time_secs > IDLE_THRESHOLD_SECS  {
                     previous_state = Some(window_state.clone());
                     tracker.update(&window_state);
@@ -99,7 +84,6 @@ async fn track_application_usage(
                 }
 
 
-                // Send update if either condition is met
                 if should_update {
                     if let Err(err) = tx.send(tracker.get_state()) {
                         error!("Error sending updated data: {:?}", err);

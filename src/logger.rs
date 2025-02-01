@@ -21,6 +21,7 @@ impl Logger {
 
         #[cfg(debug_assertions)]
         {
+            _ = log_path;
             builder.filter(None, log::LevelFilter::Debug).init();
             info!("Debug mode: Logging to console.");
         }

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::get_database_path;
-use crate::Result;
+use crate::{get_database_path, tracker};
+use tracker::Result;
 
 pub struct Config {
     pub session_id: String,

@@ -1,12 +1,18 @@
-use chrono::NaiveDateTime;
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 use crate::{
     db::models::{App, AppUsage, Classification, IdlePeriod},
     platform::{windows::WindowsHandle, Platform, WindowDetails},
-    AppData,
 };
+
+type AppMap = HashMap<String, App>;
+type UsageMap = HashMap<String, AppUsage>;
+type ClassificationMap = HashMap<String, Classification>;
+type IdleMap = HashMap<String, IdlePeriod>;
+pub type AppData = (AppMap, UsageMap, ClassificationMap, IdleMap);
+
+pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const IDLE_THRESHOLD_SECS: u64 = 30;
 
