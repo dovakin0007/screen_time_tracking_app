@@ -1,5 +1,6 @@
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
+use std::path::PathBuf;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
@@ -38,13 +39,20 @@ const CLASSIFICATION_UPSET_QUERY: &'static str = r#"
         DO NOTHING;
     "#;
 
-/// Database operations handler
-struct DbHandler {
+pub struct DbHandler {
     conn: Arc<Mutex<Connection>>,
 }
 
 impl DbHandler {
-    fn new(conn: Arc<Mutex<Connection>>) -> Self {
+    pub fn new(connection_string: PathBuf) -> Self {
+        let conn = Arc::new(Mutex::new(
+            Connection::open(&connection_string).unwrap_or_else(|err| {
+                panic!(
+                    "Failed to open database connection at {:?}: {:?}",
+                    connection_string, err
+                );
+            }),
+        ));
         Self { conn }
     }
 
@@ -64,7 +72,6 @@ impl DbHandler {
     }
 }
 
-/// Metrics for database operations
 #[derive(Debug)]
 struct DbMetrics {
     apps_count: usize,
@@ -99,23 +106,20 @@ impl DbMetrics {
     }
 }
 
-/// Process database updates for apps, their usage, and classifications
 pub async fn upsert_app_usage(
-    conn: Arc<Mutex<Connection>>,
+    db_handler: DbHandler,
     session: Sessions,
     mut rx: mpsc::UnboundedReceiver<(
         HashMap<String, App>,
         HashMap<String, AppUsage>,
         HashMap<String, Classification>,
-        HashMap<String, IdlePeriod>, // Added idle periods
+        HashMap<String, IdlePeriod>,
     )>,
 ) {
-    let db_handler = DbHandler::new(conn);
     let _ = db_handler.update_session(session).await;
     while let Some((apps, app_usages, classifications, idle_periods)) = rx.recv().await {
         let start = Instant::now();
 
-        // Process updates
         let result = process_updates(
             &db_handler,
             &apps,
@@ -125,17 +129,15 @@ pub async fn upsert_app_usage(
         )
         .await;
 
-        // Log metrics
         let metrics = DbMetrics::new(
             apps.len(),
             app_usages.len(),
             classifications.len(),
-            idle_periods.len(), // Added to metrics
+            idle_periods.len(),
             start.elapsed(),
         );
         metrics.log();
 
-        // Handle any errors
         if let Err(err) = result {
             error!("Failed to process database updates: {}", err);
         }

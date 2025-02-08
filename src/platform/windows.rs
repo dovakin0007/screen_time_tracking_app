@@ -9,8 +9,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Foundation::{BOOL, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    IsWindowVisible, GWL_EXSTYLE, WS_EX_TOOLWINDOW,
+    EnumWindows, GetWindowLongW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, IsWindowVisible, GWL_EXSTYLE, SW_SHOWMINIMIZED, WINDOWPLACEMENT,
+    WS_EX_TOOLWINDOW,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, FALSE, HINSTANCE, HWND},
@@ -21,82 +22,12 @@ use windows::Win32::{
     },
     UI::{
         Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
-        WindowsAndMessaging::{GetWindowTextA, GetWindowTextLengthA, GetWindowThreadProcessId},
+        WindowsAndMessaging::GetWindowThreadProcessId,
     },
 };
 
 use super::Platform;
 use crate::platform::WindowDetails;
-
-pub struct WindowsHandle;
-
-impl Platform for WindowsHandle {
-    fn get_window_titles() -> BTreeMap<String, WindowDetails> {
-        let state: Box<BTreeMap<String, WindowDetails>> = Box::new(BTreeMap::new());
-        let state_ptr = Box::into_raw(state);
-        let state;
-        let result = unsafe { EnumWindows(Some(enumerate_windows), LPARAM(state_ptr as isize)) };
-        if result.is_err() {
-            error!("Unable to get the window titles.");
-        }
-        state = unsafe { Box::from_raw(state_ptr) };
-        *state
-    }
-
-    fn get_last_input_info() -> Result<Duration, ()> {
-        unsafe {
-            let now = GetTickCount();
-            let mut last_input_info = LASTINPUTINFO {
-                cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-                dwTime: 0,
-            };
-            let time_ok = GetLastInputInfo(&mut last_input_info);
-            if !time_ok.as_bool() {
-                error!("Failed to retrieve the last input time.");
-                return Err(());
-            }
-            let millis = now - last_input_info.dwTime;
-            Ok(Duration::from_millis(millis as u64))
-        }
-    }
-}
-
-fn get_process_name(current_window: HWND) -> Result<String, ()> {
-    let length = unsafe { GetWindowTextLengthA(current_window) };
-    let mut title: Vec<u8> = vec![0; (length + 1) as usize];
-    let _ = unsafe { GetWindowTextA(current_window, &mut title) };
-    let mut process_id: u32 = 0;
-    unsafe { GetWindowThreadProcessId(current_window, Some(&mut process_id)) };
-    let handle = unsafe {
-        OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-            FALSE,
-            process_id,
-        )
-    };
-    let h = handle.map_err(|e| {
-        error!("Failed to open process: {:?}", e);
-    })?;
-    let mut buffer: [u16; 260] = [0; 260];
-    let result = unsafe { GetModuleFileNameExW(h, HINSTANCE::default(), &mut buffer) };
-    let _ = unsafe { CloseHandle(h) };
-
-    if result == 0 {
-        error!("Failed to retrieve the module file name.");
-        return Err(());
-    }
-    let path = OsString::from_wide(&buffer[..result as usize])
-        .to_string_lossy()
-        .into_owned();
-    Ok(path)
-}
-
-fn get_app_name_from_path(path: &str) -> Option<String> {
-    Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|s| s.to_string())
-}
 
 const FILTERED_WINDOWS: [&str; 6] = [
     "Windows Input Experience",
@@ -107,15 +38,68 @@ const FILTERED_WINDOWS: [&str; 6] = [
     "Application Frame Host",
 ];
 
+pub struct WindowsHandle;
+
+impl Platform for WindowsHandle {
+    fn get_window_titles() -> BTreeMap<String, WindowDetails> {
+        let mut state = BTreeMap::new();
+        let state_ptr = &mut state as *mut _ as isize;
+        let result = unsafe { EnumWindows(Some(enumerate_windows), LPARAM(state_ptr)) };
+
+        if result.is_err() {
+            error!("Unable to get the window titles.");
+        }
+
+        state
+    }
+
+    fn get_last_input_info() -> Result<Duration, ()> {
+        unsafe {
+            let now = GetTickCount();
+            let mut last_input_info = LASTINPUTINFO {
+                cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+                dwTime: 0,
+            };
+
+            if !GetLastInputInfo(&mut last_input_info).as_bool() {
+                error!("Failed to retrieve the last input time.");
+                return Err(());
+            }
+
+            let millis = now - last_input_info.dwTime;
+            Ok(Duration::from_millis(millis as u64))
+        }
+    }
+}
+
 unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL {
+    let state = &mut *(state.0 as *mut BTreeMap<String, WindowDetails>);
+
     if !IsWindowVisible(window).as_bool() {
         return BOOL::from(true);
     }
 
+    if is_window_minimized(window) {
+        if let Some(details) = get_window_details(window) {
+            state.insert(details.window_title.clone(), details);
+        }
+    }
+
+    if !is_valid_window(window) {
+        return BOOL::from(true);
+    }
+
+    if let Some(details) = get_window_details(window) {
+        state.insert(details.window_title.clone(), details);
+    }
+
+    BOOL::from(true)
+}
+
+unsafe fn is_valid_window(window: HWND) -> bool {
     let mut rect = RECT::default();
     if GetWindowRect(window, &mut rect).is_err() {
-        error!("Failed to get window rectangle.");
-        return BOOL::from(true);
+        return false;
     }
 
     let width = rect.right - rect.left;
@@ -126,63 +110,121 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
         || height <= 100
         || (rect.top > 0 && height < 200)
     {
-        return BOOL::from(true);
-    }
-
-    let state = state.0 as *mut BTreeMap<String, WindowDetails>;
-    let length = GetWindowTextLengthW(window);
-    if length == 0 {
-        return BOOL::from(true);
+        return false;
     }
 
     let ex_style = GetWindowLongW(window, GWL_EXSTYLE);
+    (ex_style & (WS_EX_TOOLWINDOW.0) as i32) == 0
+}
 
-    if (ex_style & (WS_EX_TOOLWINDOW.0) as i32) != 0 {
-        return BOOL::from(true);
+fn get_window_details(window: HWND) -> Option<WindowDetails> {
+    let title = unsafe { get_window_title(window)? };
+    let (app_name, app_path) = get_app_details(window);
+    let sanitized_title = sanitize_title(&title);
+
+    if should_include_window(&sanitized_title, &app_path) {
+        Some(WindowDetails {
+            window_title: sanitized_title,
+            app_name: Some(app_name),
+            app_path: Some(app_path),
+            is_active: false,
+        })
+    } else {
+        None
+    }
+}
+
+unsafe fn get_window_title(window: HWND) -> Option<String> {
+    let length = GetWindowTextLengthW(window);
+    if length == 0 {
+        return None;
     }
 
-    let mut title: Vec<u16> = vec![0; (length + 1) as usize];
-    let text_len = GetWindowTextW(window, &mut title);
-    if text_len > 0 {
-        if let Ok(mut title) = String::from_utf16(&title[0..text_len as usize]) {
-            let path_name = get_process_name(window).unwrap_or_else(|_| {
-                error!("Unable to get process name.");
-                "Invalid path".to_string()
-            });
+    let mut buffer = vec![0u16; (length + 1) as usize];
+    let len = GetWindowTextW(window, &mut buffer);
+    buffer.truncate(len as usize);
 
-            let emoji_pattern = Regex::new(r"[\p{Emoji}]|●|[^\x00-\x7F]").unwrap();
-            let app_name = get_app_name_from_path(&path_name)
-                .unwrap_or_else(|| "Invalid app name".to_string());
+    String::from_utf16(&buffer).ok()
+}
 
-            title = (&title
-                .graphemes(true)
-                .filter(|g| !emoji_pattern.is_match(g))
-                .collect::<String>()
-                .trim())
-                .to_string();
+fn get_app_details(window: HWND) -> (String, String) {
+    let path = get_process_path(window).unwrap_or_else(|_| {
+        error!("Failed to get process path");
+        "Unknown".into()
+    });
 
-            if !title.is_empty()
-                && !FILTERED_WINDOWS.contains(&title.as_str())
-                && !title.contains("notification")
-                && !title.contains("Notification")
-                && !title.starts_with("_")
-                && !title.contains("Task View")
-                && !title.contains("Start")
-                && !path_name.contains("SystemSettings.exe")
-                && !path_name.contains("ShellExperienceHost.exe")
-            {
-                (*state).insert(
-                    title.clone(),
-                    WindowDetails {
-                        window_title: title,
-                        app_name: Some(app_name),
-                        app_path: Some(path_name),
-                        is_active: false,
-                    },
-                );
-            }
+    let app_name = Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+
+    (app_name, path)
+}
+
+fn get_process_path(window: HWND) -> Result<String, ()> {
+    let mut process_id = 0;
+    unsafe { GetWindowThreadProcessId(window, Some(&mut process_id)) };
+
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            FALSE,
+            process_id,
+        )
+    }
+    .map_err(|e| {
+        error!("OpenProcess failed: {:?}", e);
+    })?;
+
+    let mut buffer = [0u16; 260];
+    let len = unsafe { GetModuleFileNameExW(handle, HINSTANCE::default(), &mut buffer) };
+    unsafe {
+        if CloseHandle(handle).is_err() {
+            error!("Unable Close the handle")
         }
+    };
+
+    if len == 0 {
+        error!("GetModuleFileNameExW failed");
+        return Err(());
     }
 
-    BOOL::from(true)
+    Ok(OsString::from_wide(&buffer[..len as usize])
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn sanitize_title(title: &str) -> String {
+    let emoji_pattern = Regex::new(r"[\p{Emoji}]|●|[^\x00-\x7F]").unwrap();
+    title
+        .graphemes(true)
+        .filter(|g| !emoji_pattern.is_match(g))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn should_include_window(title: &str, path: &str) -> bool {
+    !title.is_empty()
+        && !FILTERED_WINDOWS.contains(&title)
+        && !title.to_lowercase().contains("notification")
+        && !title.starts_with('_')
+        && !title.contains("Task View")
+        && !title.contains("Start")
+        && !path.contains("SystemSettings.exe")
+        && !path.contains("ShellExperienceHost.exe")
+}
+
+fn is_window_minimized(hwnd: HWND) -> bool {
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+
+    unsafe {
+        GetWindowPlacement(hwnd, &mut placement)
+            .map(|_| placement.showCmd == SW_SHOWMINIMIZED.0 as u32)
+            .unwrap_or(false)
+    }
 }
