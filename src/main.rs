@@ -15,9 +15,9 @@ use tokio::sync::{mpsc, Mutex};
 use tracker::{AppData, AppTracker, WindowStateManager};
 
 pub mod config;
-mod db;
+pub mod db;
 pub mod logger;
-mod platform;
+pub mod platform;
 pub mod tracker;
 
 use db::connection::upsert_app_usage;
@@ -61,6 +61,7 @@ async fn track_application_usage(
                 }
                 break;
             }
+
             _ = async {
                 let start = Instant::now();
                 let window_state = WindowStateManager::get_current_state();
@@ -110,7 +111,6 @@ async fn main() -> Result<()> {
 
     let config = Config::new()?;
     Logger::initialize(&config.log_path);
-
     let conn = Arc::new(Mutex::new(
         Connection::open(&config.db_path).unwrap_or_else(|err| {
             panic!(
@@ -147,6 +147,5 @@ async fn main() -> Result<()> {
     if let Err(err) = db_res {
         error!("Database task failed: {:?}", err);
     }
-
     Ok(())
 }

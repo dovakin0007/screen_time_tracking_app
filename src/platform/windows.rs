@@ -98,7 +98,6 @@ fn get_app_name_from_path(path: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-// List of common system windows to filter out
 const FILTERED_WINDOWS: [&str; 6] = [
     "Windows Input Experience",
     "Program Manager",
@@ -121,7 +120,6 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
 
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
-    // Filter out small windows, tray windows, and potential popups
     if rect.left <= -32000
         || rect.top <= -32000
         || width <= 100
@@ -152,7 +150,6 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                 "Invalid path".to_string()
             });
 
-            // Filter out emojis, special characters, and non-ASCII characters
             let emoji_pattern = Regex::new(r"[\p{Emoji}]|●|[^\x00-\x7F]").unwrap();
             let app_name = get_app_name_from_path(&path_name)
                 .unwrap_or_else(|| "Invalid app name".to_string());
@@ -164,7 +161,6 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
                 .trim())
                 .to_string();
 
-            // Additional filtering conditions
             if !title.is_empty()
                 && !FILTERED_WINDOWS.contains(&title.as_str())
                 && !title.contains("notification")

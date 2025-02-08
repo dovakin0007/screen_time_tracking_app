@@ -182,9 +182,15 @@ async fn process_updates(
                 usage.last_updated_time,
             ],
         ) {
-            Ok(_) => debug!("Successfully upserted usage for app: {}", usage.application_name),
+            Ok(_) => debug!(
+                "Successfully upserted usage for app: {}",
+                usage.application_name
+            ),
             Err(err) => {
-                error!("Failed to upsert usage for '{}': {}", usage.application_name, err);
+                error!(
+                    "Failed to upsert usage for '{}': {}",
+                    usage.application_name, err
+                );
                 return Err(err);
             }
         }
@@ -196,9 +202,15 @@ async fn process_updates(
             CLASSIFICATION_UPSET_QUERY,
             params![classification.name, classification.window_title],
         ) {
-            Ok(_) => debug!("Successfully upserted classification for: {}", classification.name),
+            Ok(_) => debug!(
+                "Successfully upserted classification for: {}",
+                classification.name
+            ),
             Err(err) => {
-                error!("Failed to upsert classification for '{}': {}", classification.name, err);
+                error!(
+                    "Failed to upsert classification for '{}': {}",
+                    classification.name, err
+                );
                 return Err(err);
             }
         }
@@ -220,9 +232,15 @@ async fn process_updates(
                 idle_period.end_time,
             ],
         ) {
-            Ok(_) => debug!("Successfully upserted idle period for app: {}", idle_period.app_name),
+            Ok(_) => debug!(
+                "Successfully upserted idle period for app: {}",
+                idle_period.app_name
+            ),
             Err(err) => {
-                error!("Failed to upsert idle period for '{}': {}", idle_period.app_name, err);
+                error!(
+                    "Failed to upsert idle period for '{}': {}",
+                    idle_period.app_name, err
+                );
                 return Err(err);
             }
         }
