@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 #[cfg(windows)]
 pub mod windows;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct WindowDetails {
     pub window_title: String,
     pub app_name: Option<String>,

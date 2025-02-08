@@ -1,0 +1,29 @@
+[tasks.format]
+install_crate = "rustfmt"
+command = "cargo"
+args = ["fmt", "--", "--emit=files"]
+
+[tasks.clean]
+command = "cargo"
+args = ["clean"]
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--release"]
+dependencies = ["clean"]
+
+[tasks.delete-task]
+command = "schtasks"
+args = ["/delete", "/tn", "ScreenTimeTracker", "/f"]
+
+[tasks.create-task]
+command = "schtasks"
+args = ["/create", "/tn", "ScreenTimeTracker", "/xml", "./ScreenTimeTracker.xml"]
+
+[tasks.my-flow]
+dependencies = [
+    "format",
+    "build",
+    "delete-task",
+    "create-task",
+]

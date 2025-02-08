@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Local, NaiveDate, NaiveDateTime};
 
 #[derive(Debug, Default, Clone)]
 pub struct App {
@@ -26,6 +26,15 @@ pub struct Classification {
 pub struct Sessions {
     pub session_id: String,
     pub session_date: NaiveDate,
+}
+
+impl Sessions {
+    pub fn new(session_id: String) -> Self {
+        Self {
+            session_id,
+            session_date: Local::now().date_naive(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
