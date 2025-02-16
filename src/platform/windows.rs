@@ -1,33 +1,38 @@
+use std::{
+    collections::BTreeMap, ffi::OsString, os::windows::prelude::*, path::Path, time::Duration,
+};
+
 use anyhow::Result;
+use chrono::{DateTime, Local, TimeZone};
 use log::error;
 use regex::Regex;
-use std::collections::BTreeMap;
-use std::os::windows::prelude::*;
-use std::time::Duration;
-use std::{ffi::OsString, path::Path};
 use unicode_segmentation::UnicodeSegmentation;
-use windows::Win32::Foundation::LPARAM;
-use windows::Win32::Foundation::{BOOL, RECT};
-use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowLongW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, IsWindowVisible, GWL_EXSTYLE, SW_SHOWMINIMIZED, WINDOWPLACEMENT,
-    WS_EX_TOOLWINDOW,
-};
 use windows::Win32::{
-    Foundation::{CloseHandle, FALSE, HINSTANCE, HWND},
+    Foundation::{CloseHandle, BOOL, FALSE, FILETIME, HINSTANCE, HWND, LPARAM, RECT, SYSTEMTIME},
     System::{
         ProcessStatus::GetModuleFileNameExW,
         SystemInformation::GetTickCount,
-        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+        Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+        Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
     },
     UI::{
         Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
-        WindowsAndMessaging::GetWindowThreadProcessId,
+        WindowsAndMessaging::{
+            EnumWindows, GetWindowLongW, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW,
+            GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE,
+            SW_SHOWMINIMIZED, WINDOWPLACEMENT, WS_EX_TOOLWINDOW,
+        },
     },
 };
 
 use super::Platform;
 use crate::platform::WindowDetails;
+
+macro_rules! sys_time_to_local_time {
+    ($($systime: ident),*) => {
+        ( $(chrono::Local.with_ymd_and_hms($systime.wYear.into(), $systime.wMonth.into(), $systime.wDay.into(), $systime.wHour.into(), $systime.wMinute.into(), $systime.wSecond.into()).unwrap()),* )
+    };
+}
 
 const FILTERED_WINDOWS: [&str; 6] = [
     "Windows Input Experience",
@@ -41,16 +46,24 @@ const FILTERED_WINDOWS: [&str; 6] = [
 pub struct WindowsHandle;
 
 impl Platform for WindowsHandle {
-    fn get_window_titles() -> BTreeMap<String, WindowDetails> {
-        let mut state = BTreeMap::new();
-        let state_ptr = &mut state as *mut _ as isize;
+    fn get_window_titles() -> (
+        BTreeMap<String, WindowDetails>,
+        BTreeMap<String, WindowDetails>,
+    ) {
+        let mut window_title_map = BTreeMap::new();
+        let mut app_name_map = BTreeMap::new();
+
+        // Create a tuple of pointers to both maps
+        let state = (&mut window_title_map, &mut app_name_map);
+        let state_ptr = &state as *const _ as isize;
+
         let result = unsafe { EnumWindows(Some(enumerate_windows), LPARAM(state_ptr)) };
 
         if result.is_err() {
             error!("Unable to get the window titles.");
         }
 
-        state
+        (window_title_map, app_name_map)
     }
 
     fn get_last_input_info() -> Result<Duration, ()> {
@@ -73,7 +86,11 @@ impl Platform for WindowsHandle {
 }
 
 unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL {
-    let state = &mut *(state.0 as *mut BTreeMap<String, WindowDetails>);
+    let state = &mut *(state.0
+        as *mut (
+            &mut BTreeMap<String, WindowDetails>,
+            &mut BTreeMap<String, WindowDetails>,
+        ));
 
     if !IsWindowVisible(window).as_bool() {
         return BOOL::from(true);
@@ -81,7 +98,12 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
 
     if is_window_minimized(window) {
         if let Some(details) = get_window_details(window) {
-            state.insert(details.window_title.clone(), details);
+            state
+                .0
+                .insert(details.window_title.clone(), details.clone());
+            if let Some(app_name) = &details.app_name {
+                state.1.insert(app_name.clone(), details);
+            }
         }
     }
 
@@ -90,7 +112,12 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
     }
 
     if let Some(details) = get_window_details(window) {
-        state.insert(details.window_title.clone(), details);
+        state
+            .0
+            .insert(details.window_title.clone(), details.clone());
+        if let Some(app_name) = &details.app_name {
+            state.1.insert(app_name.clone(), details);
+        }
     }
 
     BOOL::from(true)
@@ -119,7 +146,7 @@ unsafe fn is_valid_window(window: HWND) -> bool {
 
 fn get_window_details(window: HWND) -> Option<WindowDetails> {
     let title = unsafe { get_window_title(window)? };
-    let (app_name, app_path) = get_app_details(window);
+    let (app_name, app_path, start_time) = get_app_details(window);
     let sanitized_title = sanitize_title(&title);
 
     if should_include_window(&sanitized_title, &app_path) {
@@ -127,6 +154,7 @@ fn get_window_details(window: HWND) -> Option<WindowDetails> {
             window_title: sanitized_title,
             app_name: Some(app_name),
             app_path: Some(app_path),
+            start_time,
             is_active: false,
         })
     } else {
@@ -147,10 +175,15 @@ unsafe fn get_window_title(window: HWND) -> Option<String> {
     String::from_utf16(&buffer).ok()
 }
 
-fn get_app_details(window: HWND) -> (String, String) {
+fn get_app_details(window: HWND) -> (String, String, DateTime<Local>) {
     let path = get_process_path(window).unwrap_or_else(|_| {
         error!("Failed to get process path");
         "Unknown".into()
+    });
+    let start_time = get_start_time(window).unwrap_or_else(|_| {
+        error!("Failed to get process start time");
+        let date_time: DateTime<Local> = DateTime::default();
+        date_time
     });
 
     let app_name = Path::new(&path)
@@ -159,7 +192,11 @@ fn get_app_details(window: HWND) -> (String, String) {
         .unwrap_or("Unknown")
         .to_string();
 
-    (app_name, path)
+    (app_name, path, start_time)
+}
+
+fn ptr_mut_to_const<T>(ptr: *mut T) -> *const T {
+    ptr as _
 }
 
 fn get_process_path(window: HWND) -> Result<String, ()> {
@@ -176,7 +213,6 @@ fn get_process_path(window: HWND) -> Result<String, ()> {
     .map_err(|e| {
         error!("OpenProcess failed: {:?}", e);
     })?;
-
     let mut buffer = [0u16; 260];
     let len = unsafe { GetModuleFileNameExW(handle, HINSTANCE::default(), &mut buffer) };
     unsafe {
@@ -193,6 +229,67 @@ fn get_process_path(window: HWND) -> Result<String, ()> {
     Ok(OsString::from_wide(&buffer[..len as usize])
         .to_string_lossy()
         .into_owned())
+}
+
+fn get_start_time(window: HWND) -> Result<DateTime<Local>, ()> {
+    let mut process_id = 0;
+    unsafe { GetWindowThreadProcessId(window, Some(&mut process_id)) };
+
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
+            FALSE,
+            process_id,
+        )
+    }
+    .map_err(|e| {
+        error!("OpenProcess failed: {:?}", e);
+    })?;
+    let mut creation_time: FILETIME = FILETIME::default();
+    let mut exit_time: FILETIME = FILETIME::default();
+    let mut kernel_time: FILETIME = FILETIME::default();
+    let mut user_time: FILETIME = FILETIME::default();
+    let mut creation_time_sys: SYSTEMTIME = SYSTEMTIME::default();
+    unsafe {
+        if GetProcessTimes(
+            handle,
+            &mut creation_time,
+            &mut exit_time,
+            &mut kernel_time,
+            &mut user_time,
+        )
+        .is_err()
+        {
+            error!("GetProcessTimes failed");
+            return Err(());
+        };
+    }
+    let creation_time_const = ptr_mut_to_const(&mut creation_time);
+    unsafe {
+        if FileTimeToSystemTime(creation_time_const, &mut creation_time_sys).is_err() {
+            error!("FileTimeToSystemTime failed");
+            return Err(());
+        };
+    }
+    let mut creation_time_local = SYSTEMTIME::default();
+    let creation_time_sys_ptr = ptr_mut_to_const(&mut creation_time_sys);
+
+    unsafe {
+        if SystemTimeToTzSpecificLocalTime(None, creation_time_sys_ptr, &mut creation_time_local)
+            .is_err()
+        {
+            error!("SystemTimeToTzSpecificLocalTime failed");
+            return Err(());
+        };
+    }
+    unsafe {
+        if CloseHandle(handle).is_err() {
+            error!("Unable Close the handle")
+        }
+    }
+
+    let start_time = sys_time_to_local_time!(creation_time_local);
+    return Ok(start_time);
 }
 
 fn sanitize_title(title: &str) -> String {

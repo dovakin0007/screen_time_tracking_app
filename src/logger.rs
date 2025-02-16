@@ -1,8 +1,8 @@
+use std::{io::Write, path::Path};
+
 use chrono::Local;
 use env_logger::Builder;
 use log::info;
-use std::io::Write;
-use std::path::Path;
 
 pub struct Logger;
 
@@ -22,7 +22,7 @@ impl Logger {
         #[cfg(debug_assertions)]
         {
             _ = log_path;
-            builder.filter(None, log::LevelFilter::Debug).init();
+            builder.filter(None, log::LevelFilter::Info).init();
             info!("Debug mode: Logging to console.");
         }
 

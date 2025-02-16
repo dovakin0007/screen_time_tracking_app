@@ -1,15 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::BTreeMap;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use config::Config;
 use dotenvy::dotenv;
 use log::{error, info};
 use logger::Logger;
-use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
+use system_usage::Machine;
+use tokio::{join, runtime::Runtime, sync::mpsc, task};
 use tracker::{AppData, AppTracker, WindowStateManager};
 
 pub mod config;
@@ -17,14 +20,16 @@ pub mod db;
 pub mod logger;
 pub mod platform;
 pub mod tracker;
+pub mod zero_mq_service;
+pub mod system_usage;
 
-use db::connection::{upsert_app_usage, DbHandler};
-use db::models::Sessions;
-use platform::windows::WindowsHandle;
-use platform::Platform;
-use platform::WindowDetails;
+use db::{
+    connection::{upsert_app_usage, DbHandler},
+    models::Sessions,
+};
+use platform::{windows::WindowsHandle, Platform, WindowDetails};
 use tracker::Result;
-
+use zero_mq_service::Publisher;
 #[derive(Debug)]
 pub struct WindowStateTracker {
     previous_state: Option<BTreeMap<String, WindowDetails>>,
@@ -91,10 +96,10 @@ async fn track_application_usage(
                     .unwrap_or_default()
                     .as_secs();
 
-                if state_tracker.has_state_changed(&window_state) ||
+                if state_tracker.has_state_changed(&window_state.0) ||
                    state_tracker.needs_update(DB_UPDATE_INTERVAL) ||
                    idle_time_secs > IDLE_THRESHOLD_SECS {
-                    state_tracker.update_state(window_state.clone());
+                    state_tracker.update_state(window_state.0.clone());
                     tracker.update(&window_state);
                     should_update = true;
                 }
@@ -124,21 +129,52 @@ fn main() {
     let config = Config::new().expect("Failed to load config");
     Logger::initialize(&config.log_path);
 
-    let db_handler = DbHandler::new(config.db_path.clone());
+    let db_handler = Arc::new(DbHandler::new(config.db_path.clone()));
 
     let tracker_runtime = Runtime::new().expect("Failed to create tracker runtime");
+    let server_runtime = Runtime::new().expect("Failed to create server runtime");
+
+    let tracker_db = Arc::clone(&db_handler);
+    let tracker_config = config;
     let tracker_handle = thread::spawn(move || {
         tracker_runtime.block_on(async {
-            if let Err(_) = tracker_service_main(db_handler, config).await {
+            if let Err(_) = tracker_service_main(tracker_db, tracker_config).await {
                 error!("Failed to start tracker service");
             }
         });
     });
 
-    tracker_handle.join().expect("Tracker thread panicked");
+    let server_db = Arc::clone(&db_handler);
+    let server_handle = thread::spawn(move || {
+        server_runtime.block_on(async {
+            let pub_server = Publisher::new().await;
+            let result = pub_server.call_classifier_agent(server_db).await;
+            if result.is_err() {
+                error!("{:?}", result.err());
+            }
+            let usage_handle = task::spawn(async move {
+                let mut machine = Machine::new();
+                loop {
+                    let x = machine.get_system_usage().await;
+                    println!("{:?}", x);
+                }
+            });
+            join!(usage_handle)
+        })
+    });
+
+    if let Err(e) = tracker_handle.join() {
+        error!("Tracker thread panicked: {:?}", e);
+        std::process::exit(1)
+    }
+
+    if let Err(e) = server_handle.join() {
+        error!("Server thread panicked: {:?}", e);
+        std::process::exit(1)
+    }
 }
 
-async fn tracker_service_main(db_handler: DbHandler, config: Config) -> Result<()> {
+async fn tracker_service_main(db_handler: Arc<DbHandler>, config: Config) -> Result<()> {
     let (ctrl_c_tx, ctrl_c_rx) = mpsc::unbounded_channel();
     let (tx, rx) = mpsc::unbounded_channel();
 
