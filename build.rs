@@ -4,7 +4,7 @@ extern crate winres;
 extern crate diesel;
 extern crate diesel_migrations;
 use build_print::println;
-use diesel::{Connection, sqlite::SqliteConnection};
+use diesel::{sqlite::SqliteConnection, Connection};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenvy::dotenv;
 use std::env;
@@ -26,7 +26,6 @@ fn establish_connection() -> SqliteConnection {
     };
 
     let db_path = PathBuf::from(db_path);
-
 
     if let Some(parent_dir) = db_path.parent() {
         fs::create_dir_all(parent_dir).expect("Failed to create database directory");

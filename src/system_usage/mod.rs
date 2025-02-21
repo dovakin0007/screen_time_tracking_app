@@ -87,11 +87,11 @@ impl Machine {
 
         let metrics = self.get_system_usage();
 
-        metrics.cpu_usage <= 100.0
-            && metrics.ram_usage < 100.0
+        metrics.cpu_usage <= 25.0
+            && metrics.ram_usage < 65.0
             && is_idle == true
-            && metrics.gpu_usage < 100.0
-            && metrics.gpu_mem_usage <7000.0
+            && metrics.gpu_usage < 10.0
+            && metrics.gpu_mem_usage <150.0
     }
 }
 
