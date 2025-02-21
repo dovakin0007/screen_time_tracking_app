@@ -149,14 +149,14 @@ fn main() {
         server_runtime.block_on(async {
             let pub_server = Publisher::new().await;
             let classifer_task = task::spawn(
-                pub_server.clone().call_classifier_agent(server_db.clone(), RecvFuture::new(control_recv)),
+                pub_server
+                    .clone()
+                    .call_classifier_agent(server_db.clone(), RecvFuture::new(control_recv)),
             );
-            let recv_classifer_task = task::spawn( async move {
+            let recv_classifer_task = task::spawn(async move {
                 let sub = Subscriber::new();
                 sub.recv_message(server_db.clone()).await
-            }
-
-            );
+            });
             let usage_handle = task::spawn(async move {
                 let mut machine = Machine::new();
 
@@ -168,12 +168,10 @@ fn main() {
                         .unwrap_or_default()
                         .as_secs();
                     let is_idle = idle_time > IDLE_THRESHOLD_SECS;
-                    let sys_usage = machine.check_system_usage(is_idle);
-
-                    if let Err(err) = control_sender_clone.send(sys_usage) {
-                        error!("Unable to send the status: {:?}", err);
-                    };
-
+                    let mut sys_usage = false;
+                    if is_idle == true {
+                        sys_usage = machine.check_system_usage(is_idle).await;
+                    }
                     if let Err(err) = control_sender_clone.send(sys_usage) {
                         error!("Unable to send the status: {:?}", err);
                     };
@@ -182,7 +180,8 @@ fn main() {
                     sleep(remaining_time).await;
                 }
             });
-            let (usage_res, classifier_res, recv_classified) = join!(usage_handle, classifer_task, recv_classifer_task);
+            let (usage_res, classifier_res, recv_classified) =
+                join!(usage_handle, classifer_task, recv_classifer_task);
 
             if let Err(e) = usage_res {
                 error!("Usage task encountered an error: {:?}", e);

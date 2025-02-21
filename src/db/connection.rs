@@ -1,7 +1,9 @@
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
 use std::{
-    collections::{HashMap, VecDeque}, path::PathBuf, sync::Arc
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+    sync::Arc,
 };
 use tokio::{
     sync::{mpsc, Mutex},
@@ -85,14 +87,14 @@ impl DbHandler {
              FROM activity_classifications ac
              LEFT JOIN apps as ap ON ac.application_name = ap.name
              WHERE ac.classification IS NULL OR ac.classification = 'Unclassified'
-             LIMIT 50;"
+             LIMIT 50;",
         )?;
         let classification_iter = stmt.query_map([], |row| {
             Ok(ClassificationSerde {
                 name: row.get(0)?,
                 window_title: row.get(1)?,
                 classification: row.get(3)?,
-                path: row.get(2)?
+                path: row.get(2)?,
             })
         })?;
 
@@ -106,7 +108,7 @@ impl DbHandler {
     pub async fn update_classification(&self, content: ClassificationSerde) -> SqliteResult<()> {
         const MAX_RETRIES: u64 = 5;
         const RETRY_DELAY_MS: u64 = 100;
-        
+
         let mut attempts = 0;
         loop {
             let conn = self.conn.lock().await;
@@ -121,14 +123,19 @@ impl DbHandler {
             match result {
                 Ok(_) => return Ok(()),
                 Err(rusqlite::Error::SqliteFailure(err, s)) => {
-                    if err.code == rusqlite::ffi::ErrorCode::DatabaseLocked && attempts < MAX_RETRIES {
+                    if err.code == rusqlite::ffi::ErrorCode::DatabaseLocked
+                        && attempts < MAX_RETRIES
+                    {
                         attempts += 1;
                         drop(conn);
-                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS * attempts)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            RETRY_DELAY_MS * attempts,
+                        ))
+                        .await;
                         continue;
                     }
                     return Err(rusqlite::Error::SqliteFailure(err, s));
-                },
+                }
                 Err(err) => return Err(err),
             }
         }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use nvml_wrapper::Nvml;
 use sysinfo::{MemoryRefreshKind, System};
+use tokio::time;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SystemUsage {
@@ -33,8 +34,14 @@ impl Machine {
         used_memory_percentage
     }
 
-    fn cpu_usage(&mut self) -> f32 {
-        self.sys_info.global_cpu_usage()
+    async fn cpu_usage(&mut self) -> f32 {
+        self.sys_info.refresh_cpu_all();
+        time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
+
+        self.sys_info.refresh_cpu_all();
+        let end_usage = self.sys_info.global_cpu_usage();
+
+        end_usage
     }
 
     fn gpu_usage(&self) -> Result<(f32, f32)> {
@@ -63,12 +70,11 @@ impl Machine {
         }
     }
 
-    fn get_system_usage(&mut self) -> SystemUsage {
-        self.sys_info.refresh_cpu_usage();
+    async fn get_system_usage(&mut self) -> SystemUsage {
         self.sys_info
             .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
 
-        let cpu_usage = self.cpu_usage();
+        let cpu_usage = self.cpu_usage().await;
         let ram_usage = self.memory_usage();
         let (gpu_usage, gpu_mem_usage) = self.gpu_usage().unwrap_or((0.0, 0.0));
 
@@ -80,18 +86,18 @@ impl Machine {
         }
     }
 
-    pub fn check_system_usage(&mut self, is_idle: bool) -> bool {
+    pub async fn check_system_usage(&mut self, is_idle: bool) -> bool {
         self.sys_info.refresh_cpu_usage();
         self.sys_info
             .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
 
-        let metrics = self.get_system_usage();
+        let metrics = self.get_system_usage().await;
 
-        metrics.cpu_usage <= 25.0
+        metrics.cpu_usage <= 20.0
             && metrics.ram_usage < 65.0
             && is_idle == true
             && metrics.gpu_usage < 10.0
-            && metrics.gpu_mem_usage <150.0
+            && metrics.gpu_mem_usage < 150.0
     }
 }
 
@@ -99,10 +105,10 @@ impl Machine {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_get_system_usage() {
+    #[tokio::test]
+    async fn test_get_system_usage() {
         let mut machine = Machine::new();
-        let usage = machine.get_system_usage();
+        let usage = machine.get_system_usage().await;
 
         println!(
             "CPU Usage: {:.2}% | RAM Usage: {:.2}% | GPU Usage: {:.2}% | GPU Memory Usage: {:.2}%",
