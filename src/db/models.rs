@@ -1,4 +1,5 @@
 use chrono::{Local, NaiveDate, NaiveDateTime};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone)]
 pub struct App {
@@ -9,6 +10,7 @@ pub struct App {
 #[derive(Debug, Default, Clone)]
 pub struct AppUsage {
     pub session_id: String,
+    pub app_time_id: String,
     pub app_id: String,
     pub application_name: String,
     pub current_screen_title: String,
@@ -20,6 +22,14 @@ pub struct AppUsage {
 pub struct Classification {
     pub name: String,
     pub window_title: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClassificationSerde {
+    pub name: String,
+    pub window_title: String,
+    pub path: String,
+    pub classification: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -41,7 +51,16 @@ impl Sessions {
 pub struct IdlePeriod {
     pub id: String,
     pub app_id: String,
+    pub window_id: String,
     pub session_id: String,
+    pub app_name: String,
+    pub start_time: NaiveDateTime,
+    pub end_time: NaiveDateTime,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AppTime {
+    pub id: String,
     pub app_name: String,
     pub start_time: NaiveDateTime,
     pub end_time: NaiveDateTime,

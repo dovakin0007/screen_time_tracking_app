@@ -4,8 +4,7 @@ extern crate winres;
 extern crate diesel;
 extern crate diesel_migrations;
 use build_print::println;
-use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
+use diesel::{Connection, sqlite::SqliteConnection};
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use dotenvy::dotenv;
 use std::env;
@@ -28,11 +27,6 @@ fn establish_connection() -> SqliteConnection {
 
     let db_path = PathBuf::from(db_path);
 
-    // Clear the database file if it exists
-    if db_path.exists() {
-        fs::remove_file(&db_path).expect("Failed to remove existing database file");
-        println!("Database file cleared: {:?}", db_path);
-    }
 
     if let Some(parent_dir) = db_path.parent() {
         fs::create_dir_all(parent_dir).expect("Failed to create database directory");

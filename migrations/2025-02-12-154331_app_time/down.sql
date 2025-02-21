@@ -1,2 +1,2 @@
 -- This file should undo anything in `up.sql`
-drop table app_idle_period
+drop table total_app_usage_time

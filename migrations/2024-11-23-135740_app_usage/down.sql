@@ -1,2 +1,2 @@
 -- This file should undo anything in `up.sql`
-DROP TABLE app_usages;
+DROP TABLE window_activity_usage;

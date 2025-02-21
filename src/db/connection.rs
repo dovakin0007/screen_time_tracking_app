@@ -1,11 +1,16 @@
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
-use std::path::PathBuf;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, Mutex};
-use tokio::time::Instant;
+use std::{
+    collections::{HashMap, VecDeque}, path::PathBuf, sync::Arc
+};
+use tokio::{
+    sync::{mpsc, Mutex},
+    time::Instant,
+};
 
-use super::models::{App, AppUsage, Classification, IdlePeriod, Sessions};
+use super::models::{
+    App, AppTime, AppUsage, Classification, ClassificationSerde, IdlePeriod, Sessions,
+};
 
 const APP_UPSERT_QUERY: &'static str = r#"
     INSERT INTO apps (name, path)
@@ -15,14 +20,15 @@ const APP_UPSERT_QUERY: &'static str = r#"
 "#;
 
 const USAGE_UPSERT_QUERY: &'static str = r#"
-    INSERT INTO app_usages (
+    INSERT INTO window_activity_usage (
         id, 
         session_id, 
+        app_time_id, 
         application_name, 
         current_screen_title, 
         start_time,
         last_updated_time
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
     ON CONFLICT(id) DO UPDATE SET
         last_updated_time = excluded.last_updated_time
 "#;
@@ -33,9 +39,9 @@ const SESSION_UPSET_QUERY: &'static str = r#"
     "#;
 
 const CLASSIFICATION_UPSET_QUERY: &'static str = r#"
-        INSERT INTO activity_classifications (application_name, current_screen_title, classification)
+        INSERT INTO activity_classifications (application_name, screen_title, classification)
         VALUES (?1, ?2, NULL)
-        ON CONFLICT(current_screen_title)
+        ON CONFLICT(screen_title)
         DO NOTHING;
     "#;
 
@@ -69,6 +75,63 @@ impl DbHandler {
             }
         }
         Ok(())
+    }
+
+    pub async fn fetch_all_classification(&self) -> SqliteResult<VecDeque<ClassificationSerde>> {
+        let conn = self.conn.lock().await;
+
+        let mut stmt = conn.prepare(
+            "SELECT ac.application_name, ac.screen_title, ap.path, ac.classification
+             FROM activity_classifications ac
+             LEFT JOIN apps as ap ON ac.application_name = ap.name
+             WHERE ac.classification IS NULL OR ac.classification = 'Unclassified'
+             LIMIT 50;"
+        )?;
+        let classification_iter = stmt.query_map([], |row| {
+            Ok(ClassificationSerde {
+                name: row.get(0)?,
+                window_title: row.get(1)?,
+                classification: row.get(3)?,
+                path: row.get(2)?
+            })
+        })?;
+
+        let mut classifications = VecDeque::with_capacity(50);
+        for (i, classification) in classification_iter.enumerate() {
+            classifications.insert(i, classification?);
+        }
+        Ok(classifications)
+    }
+
+    pub async fn update_classification(&self, content: ClassificationSerde) -> SqliteResult<()> {
+        const MAX_RETRIES: u64 = 5;
+        const RETRY_DELAY_MS: u64 = 100;
+        
+        let mut attempts = 0;
+        loop {
+            let conn = self.conn.lock().await;
+            let result = conn.prepare("UPDATE activity_classifications SET classification = ? WHERE application_name = ? AND screen_title = ?;")
+                .and_then(|mut stmt| {
+                    stmt.execute(params![
+                        content.classification,
+                        content.name,
+                        content.window_title
+                    ])
+                });
+            match result {
+                Ok(_) => return Ok(()),
+                Err(rusqlite::Error::SqliteFailure(err, s)) => {
+                    if err.code == rusqlite::ffi::ErrorCode::DatabaseLocked && attempts < MAX_RETRIES {
+                        attempts += 1;
+                        drop(conn);
+                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS * attempts)).await;
+                        continue;
+                    }
+                    return Err(rusqlite::Error::SqliteFailure(err, s));
+                },
+                Err(err) => return Err(err),
+            }
+        }
     }
 }
 
@@ -107,17 +170,18 @@ impl DbMetrics {
 }
 
 pub async fn upsert_app_usage(
-    db_handler: DbHandler,
+    db_handler: Arc<DbHandler>,
     session: Sessions,
     mut rx: mpsc::UnboundedReceiver<(
         HashMap<String, App>,
         HashMap<String, AppUsage>,
         HashMap<String, Classification>,
         HashMap<String, IdlePeriod>,
+        HashMap<String, AppTime>,
     )>,
 ) {
     let _ = db_handler.update_session(session).await;
-    while let Some((apps, app_usages, classifications, idle_periods)) = rx.recv().await {
+    while let Some((apps, app_usages, classifications, idle_periods, app_times)) = rx.recv().await {
         let start = Instant::now();
 
         let result = process_updates(
@@ -126,6 +190,7 @@ pub async fn upsert_app_usage(
             &app_usages,
             &classifications,
             &idle_periods,
+            &app_times,
         )
         .await;
 
@@ -150,6 +215,7 @@ async fn process_updates(
     app_usages: &HashMap<String, AppUsage>,
     classifications: &HashMap<String, Classification>,
     idle_periods: &HashMap<String, IdlePeriod>,
+    app_times: &HashMap<String, AppTime>,
 ) -> SqliteResult<()> {
     debug!("Starting batch database update process");
     let start = std::time::Instant::now();
@@ -171,6 +237,33 @@ async fn process_updates(
         }
     }
 
+    for (_, app_time) in app_times {
+        match tx.execute(
+            r#"INSERT INTO total_app_usage_time (id, app_name, start_time, end_time)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(id) DO UPDATE SET
+            end_time = excluded.end_time"#,
+            params![
+                app_time.id,
+                app_time.app_name,
+                app_time.start_time,
+                app_time.end_time,
+            ],
+        ) {
+            Ok(_) => debug!(
+                "Successfully upserted app time for app: {}",
+                app_time.app_name
+            ),
+            Err(err) => {
+                error!(
+                    "Failed to upsert app time for '{}': {}",
+                    app_time.app_name, err
+                );
+                return Err(err);
+            }
+        }
+    }
+
     debug!("Processing {} app usages", app_usages.len());
     for (_, usage) in app_usages {
         match tx.execute(
@@ -178,6 +271,7 @@ async fn process_updates(
             params![
                 usage.app_id,
                 usage.session_id,
+                usage.app_time_id,
                 usage.application_name,
                 usage.current_screen_title,
                 usage.start_time,
@@ -221,13 +315,14 @@ async fn process_updates(
     debug!("Processing {} idle periods", idle_periods.len());
     for idle_period in idle_periods.values() {
         match tx.execute(
-            r#"INSERT INTO idle_periods (id, app_id, session_id, app_name, start_time, end_time)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            r#"INSERT INTO app_idle_period (id, app_id, window_id ,session_id, app_name, start_time, end_time)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(id) DO UPDATE SET
             end_time = excluded.end_time"#,
             params![
                 idle_period.id,
                 idle_period.app_id,
+                idle_period.window_id,
                 idle_period.session_id,
                 idle_period.app_name,
                 idle_period.start_time,
@@ -257,12 +352,13 @@ async fn process_updates(
     }
 
     debug!(
-        "Batch update completed in {:?}. Processed: {} apps, {} usages, {} classifications, {} idle periods",
+        "Batch update completed in {:?}. Processed: {} apps, {} usages, {} classifications, {} idle periods, {} app times",
         start.elapsed(),
         apps.len(),
         app_usages.len(),
         classifications.len(),
-        idle_periods.len()
+        idle_periods.len(),
+        app_times.len(),
     );
 
     Ok(())
