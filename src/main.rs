@@ -12,16 +12,16 @@ use dotenvy::dotenv;
 use log::{error, info};
 use logger::Logger;
 use system_usage::Machine;
-use tokio::{join, runtime::Runtime, sync::mpsc, task};
+use tokio::{join, runtime::Runtime, sync::mpsc, task, time::sleep};
 use tracker::{AppData, AppTracker, WindowStateManager};
 
 pub mod config;
 pub mod db;
 pub mod logger;
 pub mod platform;
+pub mod system_usage;
 pub mod tracker;
 pub mod zero_mq_service;
-pub mod system_usage;
 
 use db::{
     connection::{upsert_app_usage, DbHandler},
@@ -29,7 +29,7 @@ use db::{
 };
 use platform::{windows::WindowsHandle, Platform, WindowDetails};
 use tracker::Result;
-use zero_mq_service::Publisher;
+use zero_mq_service::{Publisher, RecvFuture, Subscriber};
 #[derive(Debug)]
 pub struct WindowStateTracker {
     previous_state: Option<BTreeMap<String, WindowDetails>>,
@@ -133,7 +133,6 @@ fn main() {
 
     let tracker_runtime = Runtime::new().expect("Failed to create tracker runtime");
     let server_runtime = Runtime::new().expect("Failed to create server runtime");
-
     let tracker_db = Arc::clone(&db_handler);
     let tracker_config = config;
     let tracker_handle = thread::spawn(move || {
@@ -146,20 +145,54 @@ fn main() {
 
     let server_db = Arc::clone(&db_handler);
     let server_handle = thread::spawn(move || {
+        let (control_sender, control_recv) = tokio::sync::mpsc::unbounded_channel::<bool>();
         server_runtime.block_on(async {
             let pub_server = Publisher::new().await;
-            let result = pub_server.call_classifier_agent(server_db).await;
-            if result.is_err() {
-                error!("{:?}", result.err());
+            let classifer_task = task::spawn(
+                pub_server.clone().call_classifier_agent(server_db.clone(), RecvFuture::new(control_recv)),
+            );
+            let recv_classifer_task = task::spawn( async move {
+                let sub = Subscriber::new();
+                sub.recv_message(server_db.clone()).await
             }
+
+            );
             let usage_handle = task::spawn(async move {
                 let mut machine = Machine::new();
+
                 loop {
-                    let x = machine.get_system_usage().await;
-                    println!("{:?}", x);
+                    let now = Instant::now();
+                    let control_sender_clone = control_sender.clone();
+
+                    let idle_time = WindowsHandle::get_last_input_info()
+                        .unwrap_or_default()
+                        .as_secs();
+                    let is_idle = idle_time > IDLE_THRESHOLD_SECS;
+                    let sys_usage = machine.check_system_usage(is_idle);
+
+                    if let Err(err) = control_sender_clone.send(sys_usage) {
+                        error!("Unable to send the status: {:?}", err);
+                    };
+
+                    if let Err(err) = control_sender_clone.send(sys_usage) {
+                        error!("Unable to send the status: {:?}", err);
+                    };
+
+                    let remaining_time = Duration::from_secs(1).saturating_sub(now.elapsed());
+                    sleep(remaining_time).await;
                 }
             });
-            join!(usage_handle)
+            let (usage_res, classifier_res, recv_classified) = join!(usage_handle, classifer_task, recv_classifer_task);
+
+            if let Err(e) = usage_res {
+                error!("Usage task encountered an error: {:?}", e);
+            }
+            if let Err(e) = classifier_res {
+                error!("Classifier task encountered an error: {:?}", e);
+            }
+            if let Err(e) = recv_classified {
+                error!("Recv Classifier task encountered an error: {:?}", e);
+            }
         })
     });
 

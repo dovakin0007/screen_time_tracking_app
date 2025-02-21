@@ -24,10 +24,11 @@ pub struct Classification {
     pub window_title: String,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClassificationSerde {
     pub name: String,
     pub window_title: String,
+    pub path: String,
     pub classification: Option<String>,
 }
 

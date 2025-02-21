@@ -1,6 +1,8 @@
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque}, path::PathBuf, sync::Arc
+};
 use tokio::{
     sync::{mpsc, Mutex},
     time::Instant,
@@ -75,25 +77,61 @@ impl DbHandler {
         Ok(())
     }
 
-    pub async fn fetch_all_classification(&self) -> SqliteResult<Vec<ClassificationSerde>> {
+    pub async fn fetch_all_classification(&self) -> SqliteResult<VecDeque<ClassificationSerde>> {
         let conn = self.conn.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT application_name, screen_title, classification FROM activity_classifications",
+            "SELECT ac.application_name, ac.screen_title, ap.path, ac.classification
+             FROM activity_classifications ac
+             LEFT JOIN apps as ap ON ac.application_name = ap.name
+             WHERE ac.classification IS NULL OR ac.classification = 'Unclassified'
+             LIMIT 50;"
         )?;
         let classification_iter = stmt.query_map([], |row| {
             Ok(ClassificationSerde {
                 name: row.get(0)?,
                 window_title: row.get(1)?,
-                classification: row.get(2)?,
+                classification: row.get(3)?,
+                path: row.get(2)?
             })
         })?;
 
-        let mut classifications = Vec::new();
-        for classification in classification_iter {
-            classifications.push(classification?);
+        let mut classifications = VecDeque::with_capacity(50);
+        for (i, classification) in classification_iter.enumerate() {
+            classifications.insert(i, classification?);
         }
         Ok(classifications)
+    }
+
+    pub async fn update_classification(&self, content: ClassificationSerde) -> SqliteResult<()> {
+        const MAX_RETRIES: u64 = 5;
+        const RETRY_DELAY_MS: u64 = 100;
+        
+        let mut attempts = 0;
+        loop {
+            let conn = self.conn.lock().await;
+            let result = conn.prepare("UPDATE activity_classifications SET classification = ? WHERE application_name = ? AND screen_title = ?;")
+                .and_then(|mut stmt| {
+                    stmt.execute(params![
+                        content.classification,
+                        content.name,
+                        content.window_title
+                    ])
+                });
+            match result {
+                Ok(_) => return Ok(()),
+                Err(rusqlite::Error::SqliteFailure(err, s)) => {
+                    if err.code == rusqlite::ffi::ErrorCode::DatabaseLocked && attempts < MAX_RETRIES {
+                        attempts += 1;
+                        drop(conn);
+                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS * attempts)).await;
+                        continue;
+                    }
+                    return Err(rusqlite::Error::SqliteFailure(err, s));
+                },
+                Err(err) => return Err(err),
+            }
+        }
     }
 }
 
