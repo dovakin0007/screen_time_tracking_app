@@ -161,6 +161,7 @@ impl Subscriber {
                     let unescaped = escaped_json.replace("\\\\", "\\").replace("\\\"", "\"");
                     let cleaned = unescaped.trim_matches('"');
                     let data = serde_json::from_str::<ClassificationSerde>(&cleaned).unwrap();
+                    println!("recieed : {:?}", data);
                     db_handler.update_classification(data).await?;
                 }
                 Err(e) => {
