@@ -3,17 +3,16 @@ use std::{
 };
 
 use anyhow::Result;
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local, Timelike};
 use log::error;
 use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
 use windows::Win32::{
-    Foundation::{CloseHandle, BOOL, FALSE, FILETIME, HINSTANCE, HWND, LPARAM, RECT, SYSTEMTIME},
+    Foundation::{CloseHandle, BOOL, FALSE, HINSTANCE, HWND, LPARAM, RECT},
     System::{
         ProcessStatus::GetModuleFileNameExW,
         SystemInformation::GetTickCount,
-        Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
-        Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
+        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
     },
     UI::{
         Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
@@ -28,6 +27,7 @@ use windows::Win32::{
 use super::Platform;
 use crate::platform::WindowDetails;
 
+#[allow(unused_macros)]
 macro_rules! sys_time_to_local_time {
     ($($systime: ident),*) => {
         ( $(chrono::Local.with_ymd_and_hms($systime.wYear.into(), $systime.wMonth.into(), $systime.wDay.into(), $systime.wHour.into(), $systime.wMinute.into(), $systime.wSecond.into()).unwrap()),* )
@@ -180,7 +180,7 @@ fn get_app_details(window: HWND) -> (String, String, DateTime<Local>) {
         error!("Failed to get process path");
         "Unknown".into()
     });
-    let start_time = get_start_time(window).unwrap_or_else(|_| {
+    let start_time = get_start_time().unwrap_or_else(|_| {
         error!("Failed to get process start time");
         let date_time: DateTime<Local> = DateTime::default();
         date_time
@@ -195,9 +195,6 @@ fn get_app_details(window: HWND) -> (String, String, DateTime<Local>) {
     (app_name, path, start_time)
 }
 
-fn ptr_mut_to_const<T>(ptr: *mut T) -> *const T {
-    ptr as _
-}
 
 fn get_process_path(window: HWND) -> Result<String, ()> {
     let mut process_id = 0;
@@ -231,64 +228,10 @@ fn get_process_path(window: HWND) -> Result<String, ()> {
         .into_owned())
 }
 
-fn get_start_time(window: HWND) -> Result<DateTime<Local>, ()> {
-    let mut process_id = 0;
-    unsafe { GetWindowThreadProcessId(window, Some(&mut process_id)) };
-
-    let handle = unsafe {
-        OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-            FALSE,
-            process_id,
-        )
-    }
-    .map_err(|e| {
-        error!("OpenProcess failed: {:?}", e);
-    })?;
-    let mut creation_time: FILETIME = FILETIME::default();
-    let mut exit_time: FILETIME = FILETIME::default();
-    let mut kernel_time: FILETIME = FILETIME::default();
-    let mut user_time: FILETIME = FILETIME::default();
-    let mut creation_time_sys: SYSTEMTIME = SYSTEMTIME::default();
-    unsafe {
-        if GetProcessTimes(
-            handle,
-            &mut creation_time,
-            &mut exit_time,
-            &mut kernel_time,
-            &mut user_time,
-        )
-        .is_err()
-        {
-            error!("GetProcessTimes failed");
-            return Err(());
-        };
-    }
-    let creation_time_const = ptr_mut_to_const(&mut creation_time);
-    unsafe {
-        if FileTimeToSystemTime(creation_time_const, &mut creation_time_sys).is_err() {
-            error!("FileTimeToSystemTime failed");
-            return Err(());
-        };
-    }
-    let mut creation_time_local = SYSTEMTIME::default();
-    let creation_time_sys_ptr = ptr_mut_to_const(&mut creation_time_sys);
-
-    unsafe {
-        if SystemTimeToTzSpecificLocalTime(None, creation_time_sys_ptr, &mut creation_time_local)
-            .is_err()
-        {
-            error!("SystemTimeToTzSpecificLocalTime failed");
-            return Err(());
-        };
-    }
-    unsafe {
-        if CloseHandle(handle).is_err() {
-            error!("Unable Close the handle")
-        }
-    }
-
-    let start_time = sys_time_to_local_time!(creation_time_local);
+fn get_start_time() -> Result<DateTime<Local>, ()> {
+    let now = Local::now();
+    let start_time = now.with_nanosecond(0)
+       .unwrap();
     return Ok(start_time);
 }
 

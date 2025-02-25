@@ -122,7 +122,7 @@ impl AppTracker {
                     app_id: window_id.clone(),
                     application_name: app_name.to_string(),
                     current_screen_title: window_title.to_string(),
-                    start_time,
+                    start_time: current_time,
                     last_updated_time: current_time,
                     app_time_id: app_time_id.clone(),
                 });
