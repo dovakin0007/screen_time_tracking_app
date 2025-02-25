@@ -1,9 +1,7 @@
-CREATE TABLE activity_classifications (
-    application_name TEXT NOT NULL, -- Foreign key to app_usages.application_name
-    screen_title TEXT NOT NULL, -- Foreign key to app_usages.current_screen_title
+CREATE TABLE app_classifications (
+    application_name TEXT NOT NULL PRIMARY KEY, -- Foreign key to apps.name
     classification TEXT, -- Nullable column for classification
     FOREIGN KEY (application_name)
         REFERENCES apps (name)
-        ON DELETE CASCADE, -- Optional: Ensures referential integrity
-    UNIQUE (screen_title) -- Composite unique constraint
+        ON DELETE CASCADE -- Ensures referential integrity
 );

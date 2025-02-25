@@ -68,7 +68,7 @@ impl AppTracker {
                 current_time,
                 details.start_time.naive_local().with_nanosecond(0).unwrap(),
             );
-            self.update_classification(&details.window_title, &app_name);
+            self.update_classification(&app_name);
         }
 
         self.cleanup_old_entries(window_state);
@@ -150,12 +150,11 @@ impl AppTracker {
         }
     }
 
-    fn update_classification(&mut self, window_title: &str, app_name: &str) {
+    fn update_classification(&mut self, app_name: &str) {
         self.previous_classification_map.insert(
-            window_title.to_owned(),
+            app_name.to_owned(),
             Classification {
-                name: app_name.to_owned(),
-                window_title: window_title.to_owned(),
+                name: app_name.to_owned()
             },
         );
     }

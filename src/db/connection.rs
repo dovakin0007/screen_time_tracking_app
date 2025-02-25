@@ -41,9 +41,9 @@ const SESSION_UPSET_QUERY: &'static str = r#"
     "#;
 
 const CLASSIFICATION_UPSET_QUERY: &'static str = r#"
-        INSERT INTO activity_classifications (application_name, screen_title, classification)
-        VALUES (?1, ?2, NULL)
-        ON CONFLICT(screen_title)
+        INSERT INTO app_classifications (application_name, classification)
+        VALUES (?1, NULL)
+        ON CONFLICT(application_name)
         DO NOTHING;
     "#;
 
@@ -83,8 +83,8 @@ impl DbHandler {
         let conn = self.conn.lock().await;
 
         let mut stmt = conn.prepare(
-            "SELECT ac.application_name, ac.screen_title, ap.path, ac.classification
-             FROM activity_classifications ac
+            "SELECT ac.application_name, ap.path, ac.classification
+             FROM app_classifications ac
              LEFT JOIN apps as ap ON ac.application_name = ap.name
              WHERE ac.classification IS NULL OR ac.classification = 'Unclassified'
              LIMIT 50;",
@@ -92,9 +92,8 @@ impl DbHandler {
         let classification_iter = stmt.query_map([], |row| {
             Ok(ClassificationSerde {
                 name: row.get(0)?,
-                window_title: row.get(1)?,
-                classification: row.get(3)?,
-                path: row.get(2)?,
+                classification: row.get(2)?,
+                path: row.get(1)?,
             })
         })?;
 
@@ -112,12 +111,11 @@ impl DbHandler {
         let mut attempts = 0;
         loop {
             let conn = self.conn.lock().await;
-            let result = conn.prepare("UPDATE activity_classifications SET classification = ? WHERE application_name = ? AND screen_title = ?;")
+            let result = conn.prepare("UPDATE app_classifications SET classification = ? WHERE application_name = ?;")
                 .and_then(|mut stmt| {
                     stmt.execute(params![
                         content.classification,
                         content.name,
-                        content.window_title
                     ])
                 });
             match result {
@@ -246,7 +244,7 @@ async fn process_updates(
 
     for (_, app_time) in app_times {
         match tx.execute(
-            r#"INSERT INTO total_app_usage_time (id, app_name, start_time, end_time)
+            r#"INSERT INTO app_usage_time_period (id, app_name, start_time, end_time)
             VALUES (?1, ?2, ?3, ?4)
             ON CONFLICT(id) DO UPDATE SET
             end_time = excluded.end_time"#,
@@ -303,7 +301,7 @@ async fn process_updates(
     for (_, classification) in classifications {
         match tx.execute(
             CLASSIFICATION_UPSET_QUERY,
-            params![classification.name, classification.window_title],
+            params![classification.name],
         ) {
             Ok(_) => debug!(
                 "Successfully upserted classification for: {}",
@@ -322,7 +320,7 @@ async fn process_updates(
     debug!("Processing {} idle periods", idle_periods.len());
     for idle_period in idle_periods.values() {
         match tx.execute(
-            r#"INSERT INTO app_idle_period (id, app_id, window_id ,session_id, app_name, start_time, end_time)
+            r#"INSERT INTO app_idle_time_period (id, app_id, window_id ,session_id, app_name, start_time, end_time)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(id) DO UPDATE SET
             end_time = excluded.end_time"#,

@@ -116,14 +116,14 @@ impl Publisher {
     ) -> Result<()> {
         loop {
             self.clone().update_task_queue(db_handler.clone()).await?;
-            while let Some(true) = recv.next().await {
+            if let Some(true) = recv.next().await {
                 let value = self.clone().remove_task_from_queue().await.unwrap();
                 let self_clone = Arc::clone(&self);
                 if let Err(e) = self_clone.send_classification_content(&value).await {
                     error!("Failed to process classification: {}", e);
                 }
                 if self.clone().is_queue_empty().await {
-                    break;
+                    self.clone().update_task_queue(db_handler.clone()).await?;
                 }
             }
 

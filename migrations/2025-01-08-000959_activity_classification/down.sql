@@ -1,2 +1,2 @@
 -- This file should undo anything in `up.sql`
-DROP TABLE activity_classifications
+DROP TABLE app_classifications

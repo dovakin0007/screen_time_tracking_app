@@ -8,7 +8,7 @@ CREATE TABLE window_activity_usage (
     last_updated_time TIMESTAMP NOT NULL,
     FOREIGN KEY (application_name) REFERENCES apps (name),
     FOREIGN KEY (session_id) REFERENCES sessions (id),
-    FOREIGN KEY (app_time_id) REFERENCES total_app_usage_time (id)
+    FOREIGN KEY (app_time_id) REFERENCES app_usage_time_period (id)
 );
 
 CREATE INDEX idx_app_usages_start_time ON window_activity_usage (start_time);
