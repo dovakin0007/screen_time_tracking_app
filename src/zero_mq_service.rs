@@ -10,20 +10,18 @@ use log::{debug, error};
 use tokio::sync::mpsc::{self};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
-use zeromq::{PubSocket, Socket, SocketRecv, SocketSend, SubSocket};
-
 pub struct Publisher {
-    context: Mutex<PubSocket>,
-    queue: Mutex<VecDeque<ClassificationSerde>>,
+    pub context: Mutex<zmq::Socket>,
+    pub queue: Mutex<VecDeque<ClassificationSerde>>,
 }
 
 #[derive(Clone)]
 pub struct RecvFuture {
-    pub recv: Arc<Mutex<mpsc::UnboundedReceiver<bool>>>,
+    pub recv: Arc<Mutex<mpsc::Receiver<bool>>>,
 }
 
 impl RecvFuture {
-    pub fn new(receiver: mpsc::UnboundedReceiver<bool>) -> Self {
+    pub fn new(receiver: mpsc::Receiver<bool>) -> Self {
         RecvFuture {
             recv: Arc::new(Mutex::new(receiver)),
         }
@@ -56,12 +54,13 @@ impl Future for RecvFuture {
 
 impl Publisher {
     pub async fn new() -> Arc<Self> {
-        let mut ctx = PubSocket::new();
-        if let Err(e) = ctx.bind("tcp://127.0.0.1:30002").await {
+        let ctx = zmq::Context::new();
+        let publisher = ctx.socket(zmq::PUB).unwrap();
+        if let Err(e) = publisher.bind("tcp://127.0.0.1:30002") {
             error!("Unable to bind Zeromq Tcp socket: {}", e);
         }
         Arc::new(Self {
-            context: Mutex::new(ctx),
+            context: Mutex::new(publisher),
             queue: Mutex::new(VecDeque::with_capacity(50)),
         })
     }
@@ -72,13 +71,7 @@ impl Publisher {
     ) -> Result<()> {
         match serde_json::to_string(&classification) {
             std::result::Result::Ok(classification_json) => {
-                if let Err(e) = self
-                    .context
-                    .lock()
-                    .await
-                    .send(classification_json.into())
-                    .await
-                {
+                if let Err(e) = self.context.lock().await.send(&classification_json, 0) {
                     error!("Failed to send classification content: {}", e);
                 }
             }
@@ -92,7 +85,6 @@ impl Publisher {
     async fn update_task_queue(self: Arc<Self>, db_handler: Arc<DbHandler>) -> Result<()> {
         let mut queue = self.queue.lock().await;
         if queue.is_empty() {
-            println!("queue updated");
             let mut new_tasks = DbHandler::fetch_all_classification(&db_handler).await?;
             queue.append(&mut new_tasks);
             drop(new_tasks)
@@ -114,8 +106,8 @@ impl Publisher {
         db_handler: Arc<DbHandler>,
         recv: RecvFuture,
     ) -> Result<()> {
+        self.clone().update_task_queue(db_handler.clone()).await?;
         loop {
-            self.clone().update_task_queue(db_handler.clone()).await?;
             if let Some(true) = recv.next().await {
                 let value = self.clone().remove_task_from_queue().await.unwrap();
                 let self_clone = Arc::clone(&self);
@@ -124,51 +116,53 @@ impl Publisher {
                 }
                 if self.clone().is_queue_empty().await {
                     self.clone().update_task_queue(db_handler.clone()).await?;
+                    debug!("All tasks completed. Waiting for recv to become true again...");
                 }
+            } else {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
-
-            debug!("All tasks completed. Waiting for recv to become true again...");
         }
     }
 }
 
 pub struct Subscriber {
-    pub subscriber: Mutex<SubSocket>,
+    pub subscriber: Mutex<zmq::Socket>,
 }
 
 impl Subscriber {
     pub fn new() -> Arc<Self> {
-        let ctx = SubSocket::new();
+        let ctx = zmq::Context::new();
+        let sub = ctx.socket(zmq::SUB).unwrap();
         Arc::new(Self {
-            subscriber: Mutex::new(ctx),
+            subscriber: Mutex::new(sub),
         })
     }
 
     pub async fn recv_message(self: Arc<Self>, db_handler: Arc<DbHandler>) -> Result<()> {
-        let mut ctx = self.subscriber.lock().await;
-        if let Err(e) = ctx.connect("tcp://127.0.0.1:30003").await {
+        let ctx = self.subscriber.lock().await;
+        if let Err(e) = ctx.connect("tcp://127.0.0.1:30003") {
             error!("Unable to bind Zeromq Tcp socket: {}", e);
         }
 
-        ctx.subscribe("").await?;
+        if let Err(e) = ctx.set_subscribe(b"") {
+            error!("Unable to bind Zeromq Tcp socket: {}", e);
+        }
         loop {
-            match ctx.recv().await {
+            match ctx.recv_string(0) {
                 std::result::Result::Ok(zmq_message) => {
-                    let vec_bytes = zmq_message.into_vec();
-                    let bytes_as_u8: Vec<u8> =
-                        vec_bytes.into_iter().flat_map(|b| b.to_vec()).collect();
-                    let escaped_json = String::from_utf8(bytes_as_u8)?;
-                    let unescaped = escaped_json.replace("\\\\", "\\").replace("\\\"", "\"");
+                    let message = zmq_message.unwrap();
+                    let unescaped = message.replace("\\\\", "\\").replace("\\\"", "\"");
                     let cleaned = unescaped.trim_matches('"');
                     let data = serde_json::from_str::<ClassificationSerde>(&cleaned).unwrap();
-                    println!("recieed : {:?}", data);
+
                     db_handler.update_classification(data).await?;
                 }
                 Err(e) => {
                     error!("Error receiving message: {}", e);
-                    sleep(tokio::time::Duration::from_millis(10)).await; // Prevents high CPU usage on failure
+                    sleep(tokio::time::Duration::from_millis(100)).await; // Prevents high CPU usage on failure
                 }
             }
+            sleep(tokio::time::Duration::from_millis(1000)).await;
         }
     }
 }

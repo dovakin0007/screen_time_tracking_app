@@ -12,7 +12,7 @@ use dotenvy::dotenv;
 use log::{error, info};
 use logger::Logger;
 use system_usage::Machine;
-use tokio::{join, runtime::Runtime, sync::mpsc, task, time::sleep};
+use tokio::{runtime::Runtime, sync::mpsc, task, time::sleep};
 use tracker::{AppData, AppTracker, WindowStateManager};
 
 pub mod config;
@@ -30,6 +30,7 @@ use db::{
 use platform::{windows::WindowsHandle, Platform, WindowDetails};
 use tracker::Result;
 use zero_mq_service::{Publisher, RecvFuture, Subscriber};
+//TODO: Replace String with Arc<str> or Arc<String> or Rc<String>
 #[derive(Debug)]
 pub struct WindowStateTracker {
     previous_state: Option<BTreeMap<String, WindowDetails>>,
@@ -145,18 +146,21 @@ fn main() {
 
     let server_db = Arc::clone(&db_handler);
     let server_handle = thread::spawn(move || {
-        let (control_sender, control_recv) = tokio::sync::mpsc::unbounded_channel::<bool>();
+        let (control_sender, control_recv) = tokio::sync::mpsc::channel::<bool>(30);
         server_runtime.block_on(async {
             let pub_server = Publisher::new().await;
-            let classifer_task = task::spawn(
+            let timeout = Duration::from_secs(900);
+            let classifer_task = task::spawn(tokio::time::timeout(
+                timeout,
                 pub_server
                     .clone()
                     .call_classifier_agent(server_db.clone(), RecvFuture::new(control_recv)),
-            );
-            let recv_classifer_task = task::spawn(async move {
-                let sub = Subscriber::new();
-                sub.recv_message(server_db.clone()).await
-            });
+            ));
+            let sub: Arc<Subscriber> = Subscriber::new();
+            let recv_classifier_task = task::spawn(tokio::time::timeout(
+                timeout,
+                sub.clone().recv_message(server_db.clone()),
+            ));
             let usage_handle = task::spawn(async move {
                 let mut machine = Machine::new();
 
@@ -172,7 +176,7 @@ fn main() {
                     if is_idle == true {
                         sys_usage = machine.check_system_usage(is_idle).await;
                     }
-                    if let Err(err) = control_sender_clone.send(sys_usage) {
+                    if let Err(err) = control_sender_clone.send(sys_usage).await {
                         error!("Unable to send the status: {:?}", err);
                     };
 
@@ -180,17 +184,28 @@ fn main() {
                     sleep(remaining_time).await;
                 }
             });
-            let (usage_res, classifier_res, recv_classified) =
-                join!(usage_handle, classifer_task, recv_classifer_task);
 
-            if let Err(e) = usage_res {
-                error!("Usage task encountered an error: {:?}", e);
-            }
-            if let Err(e) = classifier_res {
-                error!("Classifier task encountered an error: {:?}", e);
-            }
-            if let Err(e) = recv_classified {
-                error!("Recv Classifier task encountered an error: {:?}", e);
+            tokio::select! {
+                result = classifer_task => {
+                    let _ = pub_server.context.lock().await.unbind("tcp://127.0.0.1:30002");
+                    drop(pub_server.queue.lock().await);
+                    let _ = sub.subscriber.lock().await.disconnect("tcp://127.0.0.1:30003");
+                    drop(pub_server.context.lock().await);
+                    error!("Classifier task ended: {:?}", result);
+                    drop(pub_server);
+                    drop(sub);
+                    usage_handle.abort();
+                },
+                result = recv_classifier_task => {
+                    let _ = pub_server.context.lock().await.unbind("tcp://127.0.0.1:30002");
+                    drop(pub_server.queue.lock().await);
+                    let _ = sub.subscriber.lock().await.disconnect("tcp://127.0.0.1:30003");
+                    drop(pub_server.context.lock().await);
+                    drop(pub_server);
+                    drop(sub);
+                    error!("Recv classifier task ended: {:?}", result);
+                    usage_handle.abort();
+                },
             }
         })
     });

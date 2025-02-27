@@ -3,7 +3,6 @@ use std::{
 };
 
 use anyhow::Result;
-use chrono::{DateTime, Local, Timelike};
 use log::error;
 use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
@@ -50,6 +49,7 @@ impl Platform for WindowsHandle {
         BTreeMap<String, WindowDetails>,
         BTreeMap<String, WindowDetails>,
     ) {
+        //TODO: replace with ENUM
         let mut window_title_map = BTreeMap::new();
         let mut app_name_map = BTreeMap::new();
 
@@ -146,7 +146,7 @@ unsafe fn is_valid_window(window: HWND) -> bool {
 
 fn get_window_details(window: HWND) -> Option<WindowDetails> {
     let title = unsafe { get_window_title(window)? };
-    let (app_name, app_path, start_time) = get_app_details(window);
+    let (app_name, app_path) = get_app_details(window);
     let sanitized_title = sanitize_title(&title);
 
     if should_include_window(&sanitized_title, &app_path) {
@@ -154,7 +154,6 @@ fn get_window_details(window: HWND) -> Option<WindowDetails> {
             window_title: sanitized_title,
             app_name: Some(app_name),
             app_path: Some(app_path),
-            start_time,
             is_active: false,
         })
     } else {
@@ -175,15 +174,10 @@ unsafe fn get_window_title(window: HWND) -> Option<String> {
     String::from_utf16(&buffer).ok()
 }
 
-fn get_app_details(window: HWND) -> (String, String, DateTime<Local>) {
+fn get_app_details(window: HWND) -> (String, String) {
     let path = get_process_path(window).unwrap_or_else(|_| {
         error!("Failed to get process path");
         "Unknown".into()
-    });
-    let start_time = get_start_time().unwrap_or_else(|_| {
-        error!("Failed to get process start time");
-        let date_time: DateTime<Local> = DateTime::default();
-        date_time
     });
 
     let app_name = Path::new(&path)
@@ -192,9 +186,8 @@ fn get_app_details(window: HWND) -> (String, String, DateTime<Local>) {
         .unwrap_or("Unknown")
         .to_string();
 
-    (app_name, path, start_time)
+    (app_name, path)
 }
-
 
 fn get_process_path(window: HWND) -> Result<String, ()> {
     let mut process_id = 0;
@@ -226,13 +219,6 @@ fn get_process_path(window: HWND) -> Result<String, ()> {
     Ok(OsString::from_wide(&buffer[..len as usize])
         .to_string_lossy()
         .into_owned())
-}
-
-fn get_start_time() -> Result<DateTime<Local>, ()> {
-    let now = Local::now();
-    let start_time = now.with_nanosecond(0)
-       .unwrap();
-    return Ok(start_time);
 }
 
 fn sanitize_title(title: &str) -> String {

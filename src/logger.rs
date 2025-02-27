@@ -22,7 +22,7 @@ impl Logger {
         #[cfg(debug_assertions)]
         {
             _ = log_path;
-            builder.filter(None, log::LevelFilter::Info).init();
+            builder.filter(None, log::LevelFilter::Debug).init();
             info!("Debug mode: Logging to console.");
         }
 
@@ -33,7 +33,7 @@ impl Logger {
             });
             builder
                 .target(env_logger::Target::Pipe(Box::new(log_file)))
-                .filter(None, log::LevelFilter::Debug)
+                .filter(None, log::LevelFilter::Info)
                 .init();
             println!("Release mode: Logging to file at {:?}", log_path);
         }

@@ -111,13 +111,11 @@ impl DbHandler {
         let mut attempts = 0;
         loop {
             let conn = self.conn.lock().await;
-            let result = conn.prepare("UPDATE app_classifications SET classification = ? WHERE application_name = ?;")
-                .and_then(|mut stmt| {
-                    stmt.execute(params![
-                        content.classification,
-                        content.name,
-                    ])
-                });
+            let result = conn
+                .prepare(
+                    "UPDATE app_classifications SET classification = ? WHERE application_name = ?;",
+                )
+                .and_then(|mut stmt| stmt.execute(params![content.classification, content.name,]));
             match result {
                 Ok(_) => return Ok(()),
                 Err(rusqlite::Error::SqliteFailure(err, s)) => {
@@ -299,10 +297,7 @@ async fn process_updates(
 
     debug!("Processing {} classifications", classifications.len());
     for (_, classification) in classifications {
-        match tx.execute(
-            CLASSIFICATION_UPSET_QUERY,
-            params![classification.name],
-        ) {
+        match tx.execute(CLASSIFICATION_UPSET_QUERY, params![classification.name]) {
             Ok(_) => debug!(
                 "Successfully upserted classification for: {}",
                 classification.name

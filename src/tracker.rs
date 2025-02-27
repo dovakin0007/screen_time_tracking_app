@@ -6,7 +6,7 @@ use crate::{
     db::models::{App, AppTime, AppUsage, Classification, IdlePeriod},
     platform::{windows::WindowsHandle, Platform, WindowDetails, WindowDetailsTuple},
 };
-
+//TODO: Remove ClassificationMap
 type AppMap = HashMap<String, App>;
 type UsageMap = HashMap<String, AppUsage>;
 type ClassificationMap = HashMap<String, Classification>;
@@ -50,7 +50,10 @@ impl AppTracker {
             .naive_local()
             .with_nanosecond(0)
             .unwrap();
-
+        let start_time = chrono::Local::now()
+            .naive_local()
+            .with_nanosecond(0)
+            .unwrap();
         for (_, details) in window_state.0.iter() {
             let app_name = details
                 .app_name
@@ -62,12 +65,7 @@ impl AppTracker {
                 .unwrap_or_else(|| "Unknown Path".to_string());
 
             self.update_app(&app_name, &app_path);
-            self.update_usage(
-                &details.window_title,
-                &app_name,
-                current_time,
-                details.start_time.naive_local().with_nanosecond(0).unwrap(),
-            );
+            self.update_usage(&details.window_title, &app_name, current_time, start_time);
             self.update_classification(&app_name);
         }
 
@@ -110,7 +108,6 @@ impl AppTracker {
                 });
             }
         }
-        //TODO: rename window_id to window_instance_id and app_time_id to app_instance id
         match self.previous_app_usage_map.entry(window_title.to_string()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().last_updated_time = current_time;
@@ -154,7 +151,7 @@ impl AppTracker {
         self.previous_classification_map.insert(
             app_name.to_owned(),
             Classification {
-                name: app_name.to_owned()
+                name: app_name.to_owned(),
             },
         );
     }

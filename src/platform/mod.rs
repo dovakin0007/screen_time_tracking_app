@@ -1,7 +1,5 @@
 use std::{collections::BTreeMap, time::Duration};
 
-use chrono::{DateTime, Local};
-
 #[cfg(windows)]
 pub mod windows;
 
@@ -15,7 +13,6 @@ pub struct WindowDetails {
     pub window_title: String,
     pub app_name: Option<String>,
     pub app_path: Option<String>,
-    pub start_time: DateTime<Local>,
     pub is_active: bool,
 }
 
