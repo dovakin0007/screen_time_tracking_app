@@ -182,7 +182,9 @@ pub async fn upsert_app_usage(
     )>,
 ) {
     let _ = db_handler.update_session(session).await;
-    while let Some((apps, window_usages, classifications, idle_periods, app_usages)) = rx.recv().await {
+    while let Some((apps, window_usages, classifications, idle_periods, app_usages)) =
+        rx.recv().await
+    {
         let start = Instant::now();
 
         let result = process_updates(

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::{
-    db::models::{App, WindowUsage, AppUsage, IdlePeriod},
+    db::models::{App, AppUsage, IdlePeriod, WindowUsage},
     platform::{windows::WindowsHandle, Platform, WindowDetails},
 };
 
@@ -12,7 +12,13 @@ type WindowUsageMap = HashMap<String, WindowUsage>;
 type ClassificationSet = HashSet<String>;
 type IdleMap = HashMap<String, IdlePeriod>;
 type AppUsageMap = HashMap<String, AppUsage>;
-pub type AppData = (AppMap, WindowUsageMap, ClassificationSet, IdleMap, AppUsageMap);
+pub type AppData = (
+    AppMap,
+    WindowUsageMap,
+    ClassificationSet,
+    IdleMap,
+    AppUsageMap,
+);
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -108,7 +114,10 @@ impl AppTracker {
                 });
             }
         }
-        match self.previous_window_usage_map.entry(window_title.to_string()) {
+        match self
+            .previous_window_usage_map
+            .entry(window_title.to_string())
+        {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().last_updated_time = current_time;
                 window_id = entry.get().app_id.clone();
