@@ -1,7 +1,7 @@
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::Arc,
 };
@@ -10,9 +10,7 @@ use tokio::{
     time::Instant,
 };
 
-use super::models::{
-    App, AppTime, AppUsage, Classification, ClassificationSerde, IdlePeriod, Sessions,
-};
+use super::models::{App, AppUsage, ClassificationSerde, IdlePeriod, Sessions, WindowUsage};
 
 const APP_UPSERT_QUERY: &'static str = r#"
     INSERT INTO apps (name, path)
@@ -177,29 +175,29 @@ pub async fn upsert_app_usage(
     session: Sessions,
     mut rx: mpsc::UnboundedReceiver<(
         HashMap<String, App>,
-        HashMap<String, AppUsage>,
-        HashMap<String, Classification>,
+        HashMap<String, WindowUsage>,
+        HashSet<String>,
         HashMap<String, IdlePeriod>,
-        HashMap<String, AppTime>,
+        HashMap<String, AppUsage>,
     )>,
 ) {
     let _ = db_handler.update_session(session).await;
-    while let Some((apps, app_usages, classifications, idle_periods, app_times)) = rx.recv().await {
+    while let Some((apps, window_usages, classifications, idle_periods, app_usages)) = rx.recv().await {
         let start = Instant::now();
 
         let result = process_updates(
             &db_handler,
             &apps,
-            &app_usages,
+            &window_usages,
             &classifications,
             &idle_periods,
-            &app_times,
+            &app_usages,
         )
         .await;
 
         let metrics = DbMetrics::new(
             apps.len(),
-            app_usages.len(),
+            window_usages.len(),
             classifications.len(),
             idle_periods.len(),
             start.elapsed(),
@@ -215,10 +213,10 @@ pub async fn upsert_app_usage(
 async fn process_updates(
     db_handler: &DbHandler,
     apps: &HashMap<String, App>,
-    app_usages: &HashMap<String, AppUsage>,
-    classifications: &HashMap<String, Classification>,
+    window_usages: &HashMap<String, WindowUsage>,
+    classifications: &HashSet<String>,
     idle_periods: &HashMap<String, IdlePeriod>,
-    app_times: &HashMap<String, AppTime>,
+    app_usages: &HashMap<String, AppUsage>,
 ) -> SqliteResult<()> {
     debug!("Starting batch database update process");
     let start = std::time::Instant::now();
@@ -240,7 +238,7 @@ async fn process_updates(
         }
     }
 
-    for (_, app_time) in app_times {
+    for (_, app_time) in app_usages {
         match tx.execute(
             r#"INSERT INTO app_usage_time_period (id, app_name, start_time, end_time)
             VALUES (?1, ?2, ?3, ?4)
@@ -267,8 +265,8 @@ async fn process_updates(
         }
     }
 
-    debug!("Processing {} app usages", app_usages.len());
-    for (_, usage) in app_usages {
+    debug!("Processing {} app usages", window_usages.len());
+    for (_, usage) in window_usages {
         match tx.execute(
             USAGE_UPSERT_QUERY,
             params![
@@ -296,16 +294,16 @@ async fn process_updates(
     }
 
     debug!("Processing {} classifications", classifications.len());
-    for (_, classification) in classifications {
-        match tx.execute(CLASSIFICATION_UPSET_QUERY, params![classification.name]) {
+    for classification in classifications {
+        match tx.execute(CLASSIFICATION_UPSET_QUERY, params![classification]) {
             Ok(_) => debug!(
                 "Successfully upserted classification for: {}",
-                classification.name
+                classification
             ),
             Err(err) => {
                 error!(
                     "Failed to upsert classification for '{}': {}",
-                    classification.name, err
+                    classification, err
                 );
                 return Err(err);
             }
@@ -355,10 +353,10 @@ async fn process_updates(
         "Batch update completed in {:?}. Processed: {} apps, {} usages, {} classifications, {} idle periods, {} app times",
         start.elapsed(),
         apps.len(),
-        app_usages.len(),
+        window_usages.len(),
         classifications.len(),
         idle_periods.len(),
-        app_times.len(),
+        app_usages.len(),
     );
 
     Ok(())

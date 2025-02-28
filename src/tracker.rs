@@ -1,18 +1,18 @@
 use chrono::Timelike;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::{
-    db::models::{App, AppTime, AppUsage, Classification, IdlePeriod},
-    platform::{windows::WindowsHandle, Platform, WindowDetails, WindowDetailsTuple},
+    db::models::{App, WindowUsage, AppUsage, IdlePeriod},
+    platform::{windows::WindowsHandle, Platform, WindowDetails},
 };
-//TODO: Remove ClassificationMap
+
 type AppMap = HashMap<String, App>;
-type UsageMap = HashMap<String, AppUsage>;
-type ClassificationMap = HashMap<String, Classification>;
+type WindowUsageMap = HashMap<String, WindowUsage>;
+type ClassificationSet = HashSet<String>;
 type IdleMap = HashMap<String, IdlePeriod>;
-type AppTimeMap = HashMap<String, AppTime>;
-pub type AppData = (AppMap, UsageMap, ClassificationMap, IdleMap, AppTimeMap);
+type AppUsageMap = HashMap<String, AppUsage>;
+pub type AppData = (AppMap, WindowUsageMap, ClassificationSet, IdleMap, AppUsageMap);
 
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -21,10 +21,10 @@ const IDLE_THRESHOLD_SECS: u64 = 30;
 pub struct AppTracker {
     session_id: String,
     previous_app_map: HashMap<String, App>,
-    previous_app_usage_map: HashMap<String, AppUsage>,
-    previous_classification_map: HashMap<String, Classification>,
+    previous_window_usage_map: HashMap<String, WindowUsage>,
+    previous_classification_map: HashSet<String>,
     previous_idle_map: HashMap<String, IdlePeriod>,
-    previous_app_time_map: HashMap<String, AppTime>,
+    previous_app_usage_map: HashMap<String, AppUsage>,
 }
 
 impl AppTracker {
@@ -32,10 +32,10 @@ impl AppTracker {
         Self {
             session_id,
             previous_app_map: HashMap::new(),
-            previous_app_usage_map: HashMap::new(),
-            previous_classification_map: HashMap::new(),
+            previous_window_usage_map: HashMap::new(),
+            previous_classification_map: HashSet::new(),
             previous_idle_map: HashMap::new(),
-            previous_app_time_map: HashMap::new(),
+            previous_app_usage_map: HashMap::new(),
         }
     }
 
@@ -94,13 +94,13 @@ impl AppTracker {
             .unwrap_or_default()
             .as_secs();
 
-        match self.previous_app_time_map.entry(app_name.to_string()) {
+        match self.previous_app_usage_map.entry(app_name.to_string()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().end_time = current_time;
                 app_time_id = entry.get().id.clone();
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(AppTime {
+                entry.insert(AppUsage {
                     id: app_time_id.clone(),
                     app_name: app_name.to_string(),
                     start_time,
@@ -108,13 +108,13 @@ impl AppTracker {
                 });
             }
         }
-        match self.previous_app_usage_map.entry(window_title.to_string()) {
+        match self.previous_window_usage_map.entry(window_title.to_string()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().last_updated_time = current_time;
                 window_id = entry.get().app_id.clone();
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(AppUsage {
+                entry.insert(WindowUsage {
                     session_id: self.session_id.clone(),
                     app_id: window_id.clone(),
                     application_name: app_name.to_string(),
@@ -148,12 +148,7 @@ impl AppTracker {
     }
 
     fn update_classification(&mut self, app_name: &str) {
-        self.previous_classification_map.insert(
-            app_name.to_owned(),
-            Classification {
-                name: app_name.to_owned(),
-            },
-        );
+        self.previous_classification_map.insert(app_name.to_owned());
     }
 
     fn cleanup_old_entries(
@@ -163,9 +158,9 @@ impl AppTracker {
             BTreeMap<String, WindowDetails>,
         ),
     ) {
-        self.previous_app_time_map
-            .retain(|key, _| window_state.1.contains_key(key));
         self.previous_app_usage_map
+            .retain(|key, _| window_state.1.contains_key(key));
+        self.previous_window_usage_map
             .retain(|key, _| window_state.0.contains_key(key));
         self.previous_idle_map
             .retain(|key, _| window_state.0.contains_key(key));
@@ -174,10 +169,10 @@ impl AppTracker {
     pub fn get_state(&self) -> AppData {
         (
             self.previous_app_map.clone(),
-            self.previous_app_usage_map.clone(),
+            self.previous_window_usage_map.clone(),
             self.previous_classification_map.clone(),
             self.previous_idle_map.clone(),
-            self.previous_app_time_map.clone(),
+            self.previous_app_usage_map.clone(),
         )
     }
 
@@ -188,14 +183,5 @@ impl AppTracker {
         if idle_time_secs < IDLE_THRESHOLD_SECS && self.previous_idle_map.is_empty() == false {
             self.previous_idle_map.clear();
         }
-    }
-}
-
-pub struct WindowStateManager;
-
-impl WindowStateManager {
-    pub fn get_current_state() -> WindowDetailsTuple {
-        let window_state = WindowsHandle::get_window_titles();
-        window_state
     }
 }

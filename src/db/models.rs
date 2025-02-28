@@ -8,7 +8,7 @@ pub struct App {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct AppUsage {
+pub struct WindowUsage {
     pub session_id: String,
     pub app_time_id: String,
     pub app_id: String,
@@ -16,11 +16,6 @@ pub struct AppUsage {
     pub current_screen_title: String,
     pub start_time: NaiveDateTime,
     pub last_updated_time: NaiveDateTime,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct Classification {
-    pub name: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,7 +52,7 @@ pub struct IdlePeriod {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct AppTime {
+pub struct AppUsage {
     pub id: String,
     pub app_name: String,
     pub start_time: NaiveDateTime,

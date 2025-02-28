@@ -13,7 +13,7 @@ use log::{error, info};
 use logger::Logger;
 use system_usage::Machine;
 use tokio::{runtime::Runtime, sync::mpsc, task, time::sleep};
-use tracker::{AppData, AppTracker, WindowStateManager};
+use tracker::{AppData, AppTracker};
 
 pub mod config;
 pub mod db;
@@ -30,7 +30,7 @@ use db::{
 use platform::{windows::WindowsHandle, Platform, WindowDetails};
 use tracker::Result;
 use zero_mq_service::{Publisher, RecvFuture, Subscriber};
-//TODO: Replace String with Arc<str> or Arc<String> or Rc<String>
+
 #[derive(Debug)]
 pub struct WindowStateTracker {
     previous_state: Option<BTreeMap<String, WindowDetails>>,
@@ -89,7 +89,7 @@ async fn track_application_usage(
 
             _ = async {
                 let start = Instant::now();
-                let window_state = WindowStateManager::get_current_state();
+                let window_state = WindowsHandle::get_window_titles();
 
                 let mut should_update = false;
 
@@ -163,11 +163,9 @@ fn main() {
             ));
             let usage_handle = task::spawn(async move {
                 let mut machine = Machine::new();
-
+                let control_sender_clone = control_sender.clone();
                 loop {
                     let now = Instant::now();
-                    let control_sender_clone = control_sender.clone();
-
                     let idle_time = WindowsHandle::get_last_input_info()
                         .unwrap_or_default()
                         .as_secs();
@@ -177,12 +175,14 @@ fn main() {
                         sys_usage = machine.check_system_usage(is_idle).await;
                     }
                     if let Err(err) = control_sender_clone.send(sys_usage).await {
-                        error!("Unable to send the status: {:?}", err);
+                        error!("Unable to send the status: {:?}", err.to_string());
+                        break;
                     };
 
                     let remaining_time = Duration::from_secs(1).saturating_sub(now.elapsed());
                     sleep(remaining_time).await;
                 }
+                drop(control_sender_clone);
             });
 
             tokio::select! {
@@ -212,7 +212,6 @@ fn main() {
 
     if let Err(e) = tracker_handle.join() {
         error!("Tracker thread panicked: {:?}", e);
-        std::process::exit(1)
     }
 
     if let Err(e) = server_handle.join() {
