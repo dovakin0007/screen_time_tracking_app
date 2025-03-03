@@ -96,9 +96,7 @@ impl AppTracker {
     ) {
         let mut window_id = Uuid::new_v4().to_string();
         let mut app_time_id = Uuid::new_v4().to_string();
-        let idle_time_secs = WindowsHandle::get_last_input_info()
-            .unwrap_or_default()
-            .as_secs();
+        let idle_time_secs = WindowsHandle::get_last_input_info().as_secs();
 
         match self.previous_app_usage_map.entry(app_name.to_string()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
@@ -186,10 +184,8 @@ impl AppTracker {
     }
 
     pub fn reset_idle_map(&mut self) {
-        let idle_time_secs = WindowsHandle::get_last_input_info()
-            .unwrap_or_default()
-            .as_secs();
-        if idle_time_secs < IDLE_THRESHOLD_SECS && self.previous_idle_map.is_empty() == false {
+        let idle_time_secs = WindowsHandle::get_last_input_info().as_secs();
+        if idle_time_secs < IDLE_THRESHOLD_SECS && !self.previous_idle_map.is_empty() {
             self.previous_idle_map.clear();
         }
     }

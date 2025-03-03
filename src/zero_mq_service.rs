@@ -160,7 +160,7 @@ impl Subscriber {
                     let message = zmq_message.unwrap();
                     let unescaped = message.replace("\\\\", "\\").replace("\\\"", "\"");
                     let cleaned = unescaped.trim_matches('"');
-                    let data = serde_json::from_str::<ClassificationSerde>(&cleaned).unwrap();
+                    let data = serde_json::from_str::<ClassificationSerde>(cleaned).unwrap();
 
                     db_handler.update_classification(data).await?;
                 }
@@ -199,12 +199,10 @@ pub async fn start_server(
         loop {
             let config_details = app_config.read().await;
             let now = Instant::now();
-            let idle_time = WindowsHandle::get_last_input_info()
-                .unwrap_or_default()
-                .as_secs();
+            let idle_time = WindowsHandle::get_last_input_info().as_secs();
             let is_idle = idle_time > config_details.config_message.idle_threshold_period;
             let mut sys_usage = false;
-            if is_idle == true {
+            if is_idle {
                 sys_usage = machine
                     .check_system_usage(is_idle, &config_details.config_message)
                     .await;

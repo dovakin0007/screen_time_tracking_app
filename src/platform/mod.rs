@@ -21,5 +21,5 @@ pub trait Platform {
         BTreeMap<String, WindowDetails>,
         BTreeMap<String, WindowDetails>,
     );
-    fn get_last_input_info() -> Result<Duration, ()>;
+    fn get_last_input_info() -> Duration;
 }

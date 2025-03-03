@@ -46,31 +46,24 @@ fn main() {
     let mut connection = establish_connection();
     println!("Database connection established successfully!");
     run_migrations(&mut connection);
-
-    if cfg!(target_os = "windows") {
-        use std::io::Write;
-        if std::env::var("PROFILE").unwrap() == "release" {
-            let mut res = winres::WindowsResource::new();
-            res.set_manifest(
-                r#"
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-    <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-    <security>
-        <requestedPrivileges>
-            <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
-        </requestedPrivileges>
-    </security>
-</trustInfo>
-</assembly>
-"#,
-            );
-            match res.compile() {
-                Err(error) => {
-                    write!(std::io::stderr(), "{}", error).unwrap();
-                    std::process::exit(1);
-                }
-                Ok(_) => {}
-            }
+    if cfg!(target_os = "windows") && std::env::var("PROFILE").ok().as_deref() == Some("release") {
+        let mut res = winres::WindowsResource::new();
+        res.set_manifest(
+            r#"
+    <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+        <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+        <security>
+            <requestedPrivileges>
+                <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+            </requestedPrivileges>
+        </security>
+    </trustInfo>
+    </assembly>
+    "#,
+        );
+        if let Err(error) = res.compile() {
+            eprintln!("Error: {}", error);
+            std::process::exit(1);
         }
     }
 }

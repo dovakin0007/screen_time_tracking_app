@@ -45,7 +45,9 @@ impl ConfigFile {
         let mut config_file = File::create(config_path).await?;
         let default_config = AppConfig::default();
         let default_config_string = serde_json::to_string(&default_config).unwrap();
-        config_file.write(default_config_string.as_bytes()).await?;
+        config_file
+            .write_all(default_config_string.as_bytes())
+            .await?;
         Ok(Self {
             config_message: default_config,
         })

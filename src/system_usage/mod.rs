@@ -31,9 +31,7 @@ impl Machine {
         let system_total_memory = self.sys_info.total_memory() as f32;
         let available_memory = self.sys_info.available_memory() as f32;
 
-        let used_memory_percentage = (1.0 - (available_memory / system_total_memory)) * 100.0;
-
-        used_memory_percentage
+        (1.0 - (available_memory / system_total_memory)) * 100.0
     }
 
     async fn cpu_usage(&mut self) -> f32 {
@@ -41,9 +39,8 @@ impl Machine {
         time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
 
         self.sys_info.refresh_cpu_all();
-        let end_usage = self.sys_info.global_cpu_usage();
 
-        end_usage
+        self.sys_info.global_cpu_usage()
     }
 
     fn gpu_usage(&self) -> Result<(f32, f32)> {
@@ -97,9 +94,15 @@ impl Machine {
 
         metrics.cpu_usage <= app_config.cpu_threshold
             && metrics.ram_usage < app_config.ram_usage
-            && is_idle == true
+            && is_idle
             && metrics.gpu_usage < app_config.gpu_threshold
             && metrics.gpu_mem_usage < 150.0
+    }
+}
+
+impl Default for Machine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

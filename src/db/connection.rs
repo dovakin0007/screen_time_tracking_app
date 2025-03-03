@@ -12,14 +12,14 @@ use tokio::{
 
 use super::models::{App, AppUsage, ClassificationSerde, IdlePeriod, Sessions, WindowUsage};
 
-const APP_UPSERT_QUERY: &'static str = r#"
+const APP_UPSERT_QUERY: &str = r#"
     INSERT INTO apps (name, path)
     VALUES (?1, ?2)
     ON CONFLICT(name) DO UPDATE SET
         path = excluded.path
 "#;
 
-const USAGE_UPSERT_QUERY: &'static str = r#"
+const USAGE_UPSERT_QUERY: &str = r#"
     INSERT INTO window_activity_usage (
         id, 
         session_id, 
@@ -33,17 +33,25 @@ const USAGE_UPSERT_QUERY: &'static str = r#"
         last_updated_time = excluded.last_updated_time
 "#;
 
-const SESSION_UPSET_QUERY: &'static str = r#"
+const SESSION_UPSET_QUERY: &str = r#"
         INSERT INTO sessions (id, date)
         VALUES (?1, ?2)
     "#;
 
-const CLASSIFICATION_UPSET_QUERY: &'static str = r#"
+const CLASSIFICATION_UPSET_QUERY: &str = r#"
         INSERT INTO app_classifications (application_name, classification)
         VALUES (?1, NULL)
         ON CONFLICT(application_name)
         DO NOTHING;
     "#;
+
+type ReceiveUsageInfo = mpsc::UnboundedReceiver<(
+    HashMap<String, App>,
+    HashMap<String, WindowUsage>,
+    HashSet<String>,
+    HashMap<String, IdlePeriod>,
+    HashMap<String, AppUsage>,
+)>;
 
 pub struct DbHandler {
     conn: Arc<Mutex<Connection>>,
@@ -173,13 +181,7 @@ impl DbMetrics {
 pub async fn upsert_app_usage(
     db_handler: Arc<DbHandler>,
     session: Sessions,
-    mut rx: mpsc::UnboundedReceiver<(
-        HashMap<String, App>,
-        HashMap<String, WindowUsage>,
-        HashSet<String>,
-        HashMap<String, IdlePeriod>,
-        HashMap<String, AppUsage>,
-    )>,
+    mut rx: ReceiveUsageInfo,
 ) {
     let _ = db_handler.update_session(session).await;
     while let Some((apps, window_usages, classifications, idle_periods, app_usages)) =
@@ -230,7 +232,7 @@ async fn process_updates(
     debug!("Transaction started");
 
     debug!("Processing {} apps", apps.len());
-    for (_, app) in apps {
+    for app in apps.values() {
         match tx.execute(APP_UPSERT_QUERY, params![app.name, app.path]) {
             Ok(_) => debug!("Successfully upserted app: {}", app.name),
             Err(err) => {
@@ -240,7 +242,7 @@ async fn process_updates(
         }
     }
 
-    for (_, app_time) in app_usages {
+    for app_time in app_usages.values() {
         match tx.execute(
             r#"INSERT INTO app_usage_time_period (id, app_name, start_time, end_time)
             VALUES (?1, ?2, ?3, ?4)
@@ -268,7 +270,7 @@ async fn process_updates(
     }
 
     debug!("Processing {} app usages", window_usages.len());
-    for (_, usage) in window_usages {
+    for usage in window_usages.values() {
         match tx.execute(
             USAGE_UPSERT_QUERY,
             params![

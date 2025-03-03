@@ -66,7 +66,7 @@ impl Platform for WindowsHandle {
         (window_title_map, app_name_map)
     }
 
-    fn get_last_input_info() -> Result<Duration, ()> {
+    fn get_last_input_info() -> Duration {
         unsafe {
             let now = GetTickCount();
             let mut last_input_info = LASTINPUTINFO {
@@ -76,11 +76,10 @@ impl Platform for WindowsHandle {
 
             if !GetLastInputInfo(&mut last_input_info).as_bool() {
                 error!("Failed to retrieve the last input time.");
-                return Err(());
             }
 
             let millis = now - last_input_info.dwTime;
-            Ok(Duration::from_millis(millis as u64))
+            Duration::from_millis(millis as u64)
         }
     }
 }

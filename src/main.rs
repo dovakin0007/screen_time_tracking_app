@@ -67,6 +67,12 @@ impl WindowStateTracker {
     }
 }
 
+impl Default for WindowStateTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 type Sender = mpsc::UnboundedSender<AppData>;
 
 const TRACKING_INTERVAL_MS: u64 = 1000;
@@ -96,7 +102,6 @@ async fn track_application_usage(
                 let mut should_update = false;
 
                 let idle_time_secs = WindowsHandle::get_last_input_info()
-                    .unwrap_or_default()
                     .as_secs();
 
                 if state_tracker.has_state_changed(&window_state.0) ||
@@ -154,8 +159,8 @@ async fn main() {
     let tracker_config = config;
     let tracker_handle = thread::spawn(move || {
         tracker_runtime.block_on(async {
-            if let Err(_) = tracker_service_main(tracker_db, tracker_config).await {
-                error!("Failed to start tracker service");
+            if let Err(e) = tracker_service_main(tracker_db, tracker_config).await {
+                error!("Failed to start tracker service:{:?}", e);
             }
         });
     });
