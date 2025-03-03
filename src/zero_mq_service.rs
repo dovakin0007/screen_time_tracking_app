@@ -1,14 +1,21 @@
 use std::collections::VecDeque;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::task::Poll;
+use std::time::{Duration, Instant};
 
+use crate::config_watcher::ConfigFile;
 use crate::db::{connection::DbHandler, models::ClassificationSerde};
+use crate::platform::windows::WindowsHandle;
+use crate::platform::Platform;
+use crate::system_usage::Machine;
 use anyhow::{Ok, Result};
 use futures::Future;
 use log::{debug, error};
-use tokio::sync::mpsc::{self};
-use tokio::sync::Mutex;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::{Mutex, RwLock};
+
+use tokio::task;
 use tokio::time::sleep;
 pub struct Publisher {
     pub context: Mutex<zmq::Socket>,
@@ -16,7 +23,7 @@ pub struct Publisher {
 }
 
 #[derive(Clone)]
-pub struct RecvFuture {
+pub(crate) struct RecvFuture {
     pub recv: Arc<Mutex<mpsc::Receiver<bool>>>,
 }
 
@@ -101,7 +108,7 @@ impl Publisher {
         queue.pop_front()
     }
 
-    pub async fn call_classifier_agent(
+    pub(crate) async fn call_classifier_agent(
         self: Arc<Self>,
         db_handler: Arc<DbHandler>,
         recv: RecvFuture,
@@ -125,7 +132,7 @@ impl Publisher {
     }
 }
 
-pub struct Subscriber {
+pub(crate) struct Subscriber {
     pub subscriber: Mutex<zmq::Socket>,
 }
 
@@ -164,5 +171,75 @@ impl Subscriber {
             }
             sleep(tokio::time::Duration::from_millis(1000)).await;
         }
+    }
+}
+
+pub async fn start_server(
+    server_db: Arc<DbHandler>,
+    control_sender: Sender<bool>,
+    control_recv: Receiver<bool>,
+    app_config: &'static LazyLock<RwLock<ConfigFile>>,
+) {
+    let pub_server = Publisher::new().await;
+    let timeout = Duration::from_secs(900);
+    let classifer_task = task::spawn(tokio::time::timeout(
+        timeout,
+        pub_server
+            .clone()
+            .call_classifier_agent(server_db.clone(), RecvFuture::new(control_recv)),
+    ));
+    let sub: Arc<Subscriber> = Subscriber::new();
+    let recv_classifier_task = task::spawn(tokio::time::timeout(
+        timeout,
+        sub.clone().recv_message(server_db.clone()),
+    ));
+    let usage_handle = task::spawn(async move {
+        let mut machine = Machine::new();
+        let control_sender_clone = control_sender.clone();
+        loop {
+            let config_details = app_config.read().await;
+            let now = Instant::now();
+            let idle_time = WindowsHandle::get_last_input_info()
+                .unwrap_or_default()
+                .as_secs();
+            let is_idle = idle_time > config_details.config_message.idle_threshold_period;
+            let mut sys_usage = false;
+            if is_idle == true {
+                sys_usage = machine
+                    .check_system_usage(is_idle, &config_details.config_message)
+                    .await;
+            }
+            if let Err(err) = control_sender_clone.send(sys_usage).await {
+                error!("Unable to send the status: {:?}", err.to_string());
+                break;
+            };
+
+            let remaining_time = Duration::from_secs(1).saturating_sub(now.elapsed());
+            sleep(remaining_time).await;
+        }
+        drop(control_sender_clone);
+    });
+
+    tokio::select! {
+        result = classifer_task => {
+            let _ = pub_server.context.lock().await.unbind("tcp://127.0.0.1:30002");
+            drop(pub_server.queue.lock().await);
+            let _ = sub.subscriber.lock().await.disconnect("tcp://127.0.0.1:30003");
+            drop(pub_server.context.lock().await);
+            error!("Classifier task ended: {:?}", result);
+            drop(pub_server);
+            drop(sub);
+            usage_handle.abort();
+        },
+        result = recv_classifier_task => {
+            let _ = pub_server.context.lock().await.unbind("tcp://127.0.0.1:30002");
+            drop(pub_server.queue.lock().await);
+            let _ = sub.subscriber.lock().await.disconnect("tcp://127.0.0.1:30003");
+            drop(pub_server.context.lock().await);
+            drop(pub_server);
+            drop(sub);
+            error!("Recv classifier task ended: {:?}", result);
+            usage_handle.abort();
+        },
     }
 }

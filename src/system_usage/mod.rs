@@ -3,6 +3,8 @@ use nvml_wrapper::Nvml;
 use sysinfo::{MemoryRefreshKind, System};
 use tokio::time;
 
+use crate::config_watcher::AppConfig;
+
 #[derive(Debug, Clone, Copy)]
 pub struct SystemUsage {
     pub gpu_usage: f32,
@@ -86,17 +88,17 @@ impl Machine {
         }
     }
 
-    pub async fn check_system_usage(&mut self, is_idle: bool) -> bool {
+    pub async fn check_system_usage(&mut self, is_idle: bool, app_config: &AppConfig) -> bool {
         self.sys_info.refresh_cpu_usage();
         self.sys_info
             .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
 
         let metrics = self.get_system_usage().await;
 
-        metrics.cpu_usage <= 25.0
-            && metrics.ram_usage < 60.0
+        metrics.cpu_usage <= app_config.cpu_threshold
+            && metrics.ram_usage < app_config.ram_usage
             && is_idle == true
-            && metrics.gpu_usage < 10.0
+            && metrics.gpu_usage < app_config.gpu_threshold
             && metrics.gpu_mem_usage < 150.0
     }
 }

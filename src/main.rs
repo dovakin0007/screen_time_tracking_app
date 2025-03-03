@@ -2,20 +2,24 @@
 
 use std::{
     collections::BTreeMap,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     thread,
     time::{Duration, Instant},
 };
 
 use config::Config;
+use config_watcher::{open_or_create_file, watcher, ConfigFile};
 use dotenvy::dotenv;
 use log::{error, info};
 use logger::Logger;
-use system_usage::Machine;
-use tokio::{runtime::Runtime, sync::mpsc, task, time::sleep};
+use tokio::{
+    runtime::Runtime,
+    sync::{mpsc, RwLock},
+};
 use tracker::{AppData, AppTracker};
 
 pub mod config;
+pub mod config_watcher;
 pub mod db;
 pub mod logger;
 pub mod platform;
@@ -29,7 +33,7 @@ use db::{
 };
 use platform::{windows::WindowsHandle, Platform, WindowDetails};
 use tracker::Result;
-use zero_mq_service::{Publisher, RecvFuture, Subscriber};
+use zero_mq_service::start_server;
 
 #[derive(Debug)]
 pub struct WindowStateTracker {
@@ -65,9 +69,7 @@ impl WindowStateTracker {
 
 type Sender = mpsc::UnboundedSender<AppData>;
 
-const IDLE_THRESHOLD_SECS: u64 = 30;
 const TRACKING_INTERVAL_MS: u64 = 1000;
-const DB_UPDATE_INTERVAL: Duration = Duration::from_secs(30);
 
 async fn track_application_usage(
     session_id: String,
@@ -76,7 +78,6 @@ async fn track_application_usage(
 ) {
     let mut tracker = AppTracker::new(session_id);
     let mut state_tracker = WindowStateTracker::new();
-
     loop {
         tokio::select! {
             Some(_) = ctrl_c_recv.recv() => {
@@ -88,6 +89,7 @@ async fn track_application_usage(
             }
 
             _ = async {
+                let app_config = &APP_CONFIG.read().await.config_message;
                 let start = Instant::now();
                 let window_state = WindowsHandle::get_window_titles();
 
@@ -98,8 +100,8 @@ async fn track_application_usage(
                     .as_secs();
 
                 if state_tracker.has_state_changed(&window_state.0) ||
-                   state_tracker.needs_update(DB_UPDATE_INTERVAL) ||
-                   idle_time_secs > IDLE_THRESHOLD_SECS {
+                   state_tracker.needs_update(Duration::from_secs(app_config.db_update_interval)) ||
+                   idle_time_secs > app_config.idle_threshold_period {
                     state_tracker.update_state(window_state.0.clone());
                     tracker.update(&window_state);
                     should_update = true;
@@ -119,7 +121,11 @@ async fn track_application_usage(
     }
 }
 
-fn main() {
+static APP_CONFIG: LazyLock<RwLock<ConfigFile>> =
+    LazyLock::new(|| RwLock::new(ConfigFile::default()));
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     dotenv().ok();
 
     if !cfg!(target_os = "windows") {
@@ -134,6 +140,16 @@ fn main() {
 
     let tracker_runtime = Runtime::new().expect("Failed to create tracker runtime");
     let server_runtime = Runtime::new().expect("Failed to create server runtime");
+    let file_notifier_runtime = Runtime::new().expect("Failed to create watcher runtime");
+    let file_handle = thread::spawn(move || {
+        file_notifier_runtime.block_on(async {
+            let _ = std::mem::replace(
+                &mut APP_CONFIG.write().await.config_message,
+                open_or_create_file().await.config_message,
+            );
+            watcher(&APP_CONFIG).await;
+        });
+    });
     let tracker_db = Arc::clone(&db_handler);
     let tracker_config = config;
     let tracker_handle = thread::spawn(move || {
@@ -143,75 +159,23 @@ fn main() {
             }
         });
     });
-
     let server_db = Arc::clone(&db_handler);
     let server_handle = thread::spawn(move || {
         let (control_sender, control_recv) = tokio::sync::mpsc::channel::<bool>(30);
-        server_runtime.block_on(async {
-            let pub_server = Publisher::new().await;
-            let timeout = Duration::from_secs(900);
-            let classifer_task = task::spawn(tokio::time::timeout(
-                timeout,
-                pub_server
-                    .clone()
-                    .call_classifier_agent(server_db.clone(), RecvFuture::new(control_recv)),
-            ));
-            let sub: Arc<Subscriber> = Subscriber::new();
-            let recv_classifier_task = task::spawn(tokio::time::timeout(
-                timeout,
-                sub.clone().recv_message(server_db.clone()),
-            ));
-            let usage_handle = task::spawn(async move {
-                let mut machine = Machine::new();
-                let control_sender_clone = control_sender.clone();
-                loop {
-                    let now = Instant::now();
-                    let idle_time = WindowsHandle::get_last_input_info()
-                        .unwrap_or_default()
-                        .as_secs();
-                    let is_idle = idle_time > IDLE_THRESHOLD_SECS;
-                    let mut sys_usage = false;
-                    if is_idle == true {
-                        sys_usage = machine.check_system_usage(is_idle).await;
-                    }
-                    if let Err(err) = control_sender_clone.send(sys_usage).await {
-                        error!("Unable to send the status: {:?}", err.to_string());
-                        break;
-                    };
-
-                    let remaining_time = Duration::from_secs(1).saturating_sub(now.elapsed());
-                    sleep(remaining_time).await;
-                }
-                drop(control_sender_clone);
-            });
-
-            tokio::select! {
-                result = classifer_task => {
-                    let _ = pub_server.context.lock().await.unbind("tcp://127.0.0.1:30002");
-                    drop(pub_server.queue.lock().await);
-                    let _ = sub.subscriber.lock().await.disconnect("tcp://127.0.0.1:30003");
-                    drop(pub_server.context.lock().await);
-                    error!("Classifier task ended: {:?}", result);
-                    drop(pub_server);
-                    drop(sub);
-                    usage_handle.abort();
-                },
-                result = recv_classifier_task => {
-                    let _ = pub_server.context.lock().await.unbind("tcp://127.0.0.1:30002");
-                    drop(pub_server.queue.lock().await);
-                    let _ = sub.subscriber.lock().await.disconnect("tcp://127.0.0.1:30003");
-                    drop(pub_server.context.lock().await);
-                    drop(pub_server);
-                    drop(sub);
-                    error!("Recv classifier task ended: {:?}", result);
-                    usage_handle.abort();
-                },
-            }
-        })
+        server_runtime.block_on(start_server(
+            server_db,
+            control_sender,
+            control_recv,
+            &APP_CONFIG,
+        ))
     });
 
     if let Err(e) = tracker_handle.join() {
         error!("Tracker thread panicked: {:?}", e);
+    }
+
+    if let Err(e) = file_handle.join() {
+        error!("File config listener panicked: {:?}", e);
     }
 
     if let Err(e) = server_handle.join() {
