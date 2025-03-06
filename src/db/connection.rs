@@ -1,3 +1,4 @@
+use internment::ArcIntern;
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
 use std::{
@@ -46,11 +47,11 @@ const CLASSIFICATION_UPSET_QUERY: &str = r#"
     "#;
 
 type ReceiveUsageInfo = mpsc::UnboundedReceiver<(
-    HashMap<String, App>,
-    HashMap<String, WindowUsage>,
-    HashSet<String>,
-    HashMap<String, IdlePeriod>,
-    HashMap<String, AppUsage>,
+    HashMap<ArcIntern<String>, App>,
+    HashMap<ArcIntern<String>, WindowUsage>,
+    HashSet<ArcIntern<String>>,
+    HashMap<ArcIntern<String>, IdlePeriod>,
+    HashMap<ArcIntern<String>, AppUsage>,
 )>;
 
 pub struct DbHandler {
@@ -216,11 +217,11 @@ pub async fn upsert_app_usage(
 
 async fn process_updates(
     db_handler: &DbHandler,
-    apps: &HashMap<String, App>,
-    window_usages: &HashMap<String, WindowUsage>,
-    classifications: &HashSet<String>,
-    idle_periods: &HashMap<String, IdlePeriod>,
-    app_usages: &HashMap<String, AppUsage>,
+    apps: &HashMap<ArcIntern<String>, App>,
+    window_usages: &HashMap<ArcIntern<String>, WindowUsage>,
+    classifications: &HashSet<ArcIntern<String>>,
+    idle_periods: &HashMap<ArcIntern<String>, IdlePeriod>,
+    app_usages: &HashMap<ArcIntern<String>, AppUsage>,
 ) -> SqliteResult<()> {
     debug!("Starting batch database update process");
     let start = std::time::Instant::now();
@@ -233,7 +234,7 @@ async fn process_updates(
 
     debug!("Processing {} apps", apps.len());
     for app in apps.values() {
-        match tx.execute(APP_UPSERT_QUERY, params![app.name, app.path]) {
+        match tx.execute(APP_UPSERT_QUERY, params![app.name.to_string(), app.path.to_string()]) {
             Ok(_) => debug!("Successfully upserted app: {}", app.name),
             Err(err) => {
                 error!("Failed to upsert app '{}': {}", app.name, err);
@@ -250,7 +251,7 @@ async fn process_updates(
             end_time = excluded.end_time"#,
             params![
                 app_time.id,
-                app_time.app_name,
+                app_time.app_name.to_string(),
                 app_time.start_time,
                 app_time.end_time,
             ],
@@ -277,8 +278,8 @@ async fn process_updates(
                 usage.app_id,
                 usage.session_id,
                 usage.app_time_id,
-                usage.application_name,
-                usage.current_screen_title,
+                usage.application_name.to_string(),
+                usage.current_screen_title.to_string(),
                 usage.start_time,
                 usage.last_updated_time,
             ],
@@ -299,7 +300,7 @@ async fn process_updates(
 
     debug!("Processing {} classifications", classifications.len());
     for classification in classifications {
-        match tx.execute(CLASSIFICATION_UPSET_QUERY, params![classification]) {
+        match tx.execute(CLASSIFICATION_UPSET_QUERY, params![classification.to_string()]) {
             Ok(_) => debug!(
                 "Successfully upserted classification for: {}",
                 classification
@@ -326,7 +327,7 @@ async fn process_updates(
                 idle_period.app_id,
                 idle_period.window_id,
                 idle_period.session_id,
-                idle_period.app_name,
+                idle_period.app_name.to_string(),
                 idle_period.start_time,
                 idle_period.end_time,
             ],

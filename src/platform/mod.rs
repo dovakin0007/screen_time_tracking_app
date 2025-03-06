@@ -5,16 +5,19 @@ use internment::ArcIntern;
 #[cfg(windows)]
 pub mod windows;
 
+pub type AppName = ArcIntern<String>;
+pub type WindowName = ArcIntern<String>;
+
 pub type WindowDetailsTuple = (
-    BTreeMap<String, ArcIntern<WindowDetails>>,
-    BTreeMap<String, ArcIntern<WindowDetails>>,
+    BTreeMap<WindowName, ArcIntern<WindowDetails>>,
+    BTreeMap<AppName, ArcIntern<WindowDetails>>,
 );
 
 #[derive(Debug, Clone, PartialEq, Default, Eq, Hash)]
 pub struct WindowDetails {
-    pub window_title: String,
-    pub app_name: Option<String>,
-    pub app_path: Option<String>,
+    pub window_title: ArcIntern<String>,
+    pub app_name: Option<ArcIntern<String>>,
+    pub app_path: Option<ArcIntern<String>>,
     pub is_active: bool,
 }
 

@@ -5,14 +5,14 @@ use uuid::Uuid;
 
 use crate::{
     db::models::{App, AppUsage, IdlePeriod, WindowUsage},
-    platform::{windows::WindowsHandle, Platform, WindowDetails},
+    platform::{windows::WindowsHandle, AppName, Platform, WindowDetails, WindowDetailsTuple, WindowName},
 };
 
-type AppMap = HashMap<String, App>;
-type WindowUsageMap = HashMap<String, WindowUsage>;
-type ClassificationSet = HashSet<String>;
-type IdleMap = HashMap<String, IdlePeriod>;
-type AppUsageMap = HashMap<String, AppUsage>;
+type AppMap = HashMap<ArcIntern<String>, App>;
+type WindowUsageMap = HashMap<ArcIntern<String>, WindowUsage>;
+type ClassificationSet = HashSet<ArcIntern<String>>;
+type IdleMap = HashMap<ArcIntern<String>, IdlePeriod>;
+type AppUsageMap = HashMap<ArcIntern<String>, AppUsage>;
 pub type AppData = (
     AppMap,
     WindowUsageMap,
@@ -27,11 +27,11 @@ const IDLE_THRESHOLD_SECS: u64 = 30;
 
 pub struct AppTracker {
     session_id: String,
-    previous_app_map: HashMap<String, App>,
-    previous_window_usage_map: HashMap<String, WindowUsage>,
-    previous_classification_map: HashSet<String>,
-    previous_idle_map: HashMap<String, IdlePeriod>,
-    previous_app_usage_map: HashMap<String, AppUsage>,
+    previous_app_map: HashMap<ArcIntern<String>, App>,
+    previous_window_usage_map: HashMap<ArcIntern<String>, WindowUsage>,
+    previous_classification_map: HashSet<ArcIntern<String>>,
+    previous_idle_map: HashMap<ArcIntern<String>, IdlePeriod>,
+    previous_app_usage_map: HashMap<ArcIntern<String>, AppUsage>,
 }
 
 impl AppTracker {
@@ -49,8 +49,8 @@ impl AppTracker {
     pub fn update(
         &mut self,
         window_state: &(
-            BTreeMap<String, ArcIntern<WindowDetails>>,
-            BTreeMap<String, ArcIntern<WindowDetails>>,
+            BTreeMap<WindowName, ArcIntern<WindowDetails>>,
+            BTreeMap<AppName, ArcIntern<WindowDetails>>,
         ),
     ) {
         let current_time = chrono::Local::now()
@@ -65,13 +65,13 @@ impl AppTracker {
             let app_name = details
                 .app_name
                 .clone()
-                .unwrap_or_else(|| "Unknown App".to_string());
+                .unwrap_or_else(|| ArcIntern::new("Unknown App".to_string()));
             let app_path = details
                 .app_path
                 .clone()
-                .unwrap_or_else(|| "Unknown Path".to_string());
+                .unwrap_or_else(|| ArcIntern::new("Unknown Path".to_string()));
 
-            self.update_app(&app_name, &app_path);
+            self.update_app(&app_name, app_path);
             self.update_usage(&details.window_title, &app_name, current_time, start_time);
             self.update_classification(&app_name);
         }
@@ -79,12 +79,12 @@ impl AppTracker {
         self.cleanup_old_entries(window_state);
     }
 
-    fn update_app(&mut self, app_name: &str, app_path: &str) {
+    fn update_app(&mut self, app_name: &ArcIntern<String>, app_path: ArcIntern<String>) {
         self.previous_app_map.insert(
-            app_name.to_string(),
+            app_name.clone(),
             App {
-                name: app_name.to_string(),
-                path: app_path.to_string(),
+                name: app_name.clone(),
+                path: app_path.clone(),
             },
         );
     }
@@ -98,8 +98,9 @@ impl AppTracker {
         let mut window_id = Uuid::new_v4().to_string();
         let mut app_time_id = Uuid::new_v4().to_string();
         let idle_time_secs = WindowsHandle::get_last_input_info().as_secs();
-
-        match self.previous_app_usage_map.entry(app_name.to_string()) {
+        let app_name = ArcIntern::new(app_name.to_owned());
+        let window_title = ArcIntern::new(window_title.to_owned());
+        match self.previous_app_usage_map.entry(app_name.clone()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().end_time = current_time;
                 app_time_id = entry.get().id.clone();
@@ -107,7 +108,7 @@ impl AppTracker {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 entry.insert(AppUsage {
                     id: app_time_id.clone(),
-                    app_name: app_name.to_string(),
+                    app_name: app_name.clone(),
                     start_time,
                     end_time: current_time,
                 });
@@ -115,7 +116,7 @@ impl AppTracker {
         }
         match self
             .previous_window_usage_map
-            .entry(window_title.to_string())
+            .entry(window_title.clone())
         {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().last_updated_time = current_time;
@@ -125,8 +126,8 @@ impl AppTracker {
                 entry.insert(WindowUsage {
                     session_id: self.session_id.clone(),
                     app_id: window_id.clone(),
-                    application_name: app_name.to_string(),
-                    current_screen_title: window_title.to_string(),
+                    application_name: app_name.clone(),
+                    current_screen_title: window_title.clone(),
                     start_time: current_time,
                     last_updated_time: current_time,
                     app_time_id: app_time_id.clone(),
@@ -135,7 +136,7 @@ impl AppTracker {
         }
 
         if idle_time_secs > IDLE_THRESHOLD_SECS {
-            match self.previous_idle_map.entry(window_title.to_owned()) {
+            match self.previous_idle_map.entry(window_title.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
                     entry.get_mut().end_time = current_time;
                 }
@@ -144,7 +145,7 @@ impl AppTracker {
                         app_id: app_time_id,
                         window_id,
                         session_id: self.session_id.clone(),
-                        app_name: app_name.to_string(),
+                        app_name: app_name,
                         start_time: current_time,
                         end_time: current_time,
                         id: Uuid::new_v4().to_string(),
@@ -155,16 +156,13 @@ impl AppTracker {
         }
     }
 
-    fn update_classification(&mut self, app_name: &str) {
-        self.previous_classification_map.insert(app_name.to_owned());
+    fn update_classification(&mut self, app_name: &ArcIntern<String>) {
+        self.previous_classification_map.insert(app_name.clone());
     }
 
     fn cleanup_old_entries(
         &mut self,
-        window_state: &(
-            BTreeMap<String, ArcIntern<WindowDetails>>,
-            BTreeMap<String, ArcIntern<WindowDetails>>,
-        ),
+        window_state: &WindowDetailsTuple,
     ) {
         self.previous_app_usage_map
             .retain(|key, _| window_state.1.contains_key(key));

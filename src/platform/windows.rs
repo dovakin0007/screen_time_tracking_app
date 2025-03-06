@@ -24,7 +24,7 @@ use windows::Win32::{
     },
 };
 
-use super::{Platform, WindowDetailsTuple};
+use super::{AppName, Platform, WindowDetailsTuple, WindowName};
 use crate::platform::WindowDetails;
 
 #[allow(unused_macros)]
@@ -84,8 +84,8 @@ impl Platform for WindowsHandle {
 unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL {
     let state = &mut *(state.0
         as *mut (
-            &mut BTreeMap<String, ArcIntern<WindowDetails>>,
-            &mut BTreeMap<String, ArcIntern<WindowDetails>>,
+            &mut BTreeMap<WindowName, ArcIntern<WindowDetails>>,
+            &mut BTreeMap<AppName, ArcIntern<WindowDetails>>,
         ));
 
     if !IsWindowVisible(window).as_bool() {
@@ -149,9 +149,9 @@ fn get_window_details(window: HWND) -> Option<WindowDetails> {
 
     if should_include_window(&sanitized_title, &app_path) {
         Some(WindowDetails {
-            window_title: sanitized_title,
-            app_name: Some(app_name),
-            app_path: Some(app_path),
+            window_title: ArcIntern::new(sanitized_title),
+            app_name: Some(ArcIntern::new(app_name)),
+            app_path: Some(ArcIntern::new(app_path)),
             is_active: false,
         })
     } else {
