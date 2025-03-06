@@ -1,4 +1,5 @@
 use chrono::Timelike;
+use internment::ArcIntern;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
@@ -48,8 +49,8 @@ impl AppTracker {
     pub fn update(
         &mut self,
         window_state: &(
-            BTreeMap<String, WindowDetails>,
-            BTreeMap<String, WindowDetails>,
+            BTreeMap<String, ArcIntern<WindowDetails>>,
+            BTreeMap<String, ArcIntern<WindowDetails>>,
         ),
     ) {
         let current_time = chrono::Local::now()
@@ -161,8 +162,8 @@ impl AppTracker {
     fn cleanup_old_entries(
         &mut self,
         window_state: &(
-            BTreeMap<String, WindowDetails>,
-            BTreeMap<String, WindowDetails>,
+            BTreeMap<String, ArcIntern<WindowDetails>>,
+            BTreeMap<String, ArcIntern<WindowDetails>>,
         ),
     ) {
         self.previous_app_usage_map

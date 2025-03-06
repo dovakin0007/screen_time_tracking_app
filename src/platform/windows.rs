@@ -3,6 +3,7 @@ use std::{
 };
 
 use anyhow::Result;
+use internment::ArcIntern;
 use log::error;
 use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
@@ -23,7 +24,7 @@ use windows::Win32::{
     },
 };
 
-use super::Platform;
+use super::{Platform, WindowDetailsTuple};
 use crate::platform::WindowDetails;
 
 #[allow(unused_macros)]
@@ -45,14 +46,10 @@ const FILTERED_WINDOWS: [&str; 6] = [
 pub struct WindowsHandle;
 
 impl Platform for WindowsHandle {
-    fn get_window_titles() -> (
-        BTreeMap<String, WindowDetails>,
-        BTreeMap<String, WindowDetails>,
-    ) {
+    fn get_window_titles() -> WindowDetailsTuple {
         //TODO: replace with ENUM
         let mut window_title_map = BTreeMap::new();
         let mut app_name_map = BTreeMap::new();
-
         // Create a tuple of pointers to both maps
         let state = (&mut window_title_map, &mut app_name_map);
         let state_ptr = &state as *const _ as isize;
@@ -87,8 +84,8 @@ impl Platform for WindowsHandle {
 unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL {
     let state = &mut *(state.0
         as *mut (
-            &mut BTreeMap<String, WindowDetails>,
-            &mut BTreeMap<String, WindowDetails>,
+            &mut BTreeMap<String, ArcIntern<WindowDetails>>,
+            &mut BTreeMap<String, ArcIntern<WindowDetails>>,
         ));
 
     if !IsWindowVisible(window).as_bool() {
@@ -97,6 +94,7 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
 
     if is_window_minimized(window) {
         if let Some(details) = get_window_details(window) {
+            let details = ArcIntern::new(details);
             state
                 .0
                 .insert(details.window_title.clone(), details.clone());
@@ -111,6 +109,7 @@ unsafe extern "system" fn enumerate_windows(window: HWND, state: LPARAM) -> BOOL
     }
 
     if let Some(details) = get_window_details(window) {
+        let details = ArcIntern::new(details);
         state
             .0
             .insert(details.window_title.clone(), details.clone());

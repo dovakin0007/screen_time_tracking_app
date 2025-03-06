@@ -10,6 +10,7 @@ use std::{
 use config::Config;
 use config_watcher::{open_or_create_file, watcher, ConfigFile};
 use dotenvy::dotenv;
+use internment::ArcIntern;
 use log::{error, info};
 use logger::Logger;
 use tokio::{
@@ -37,7 +38,7 @@ use zero_mq_service::start_server;
 
 #[derive(Debug)]
 pub struct WindowStateTracker {
-    previous_state: Option<BTreeMap<String, WindowDetails>>,
+    previous_state: Option<BTreeMap<String, ArcIntern<WindowDetails>>>,
     last_update: Instant,
 }
 
@@ -49,11 +50,11 @@ impl WindowStateTracker {
         }
     }
 
-    pub fn has_state_changed(&self, new_state: &BTreeMap<String, WindowDetails>) -> bool {
+    pub fn has_state_changed(&self, new_state: &BTreeMap<String, ArcIntern<WindowDetails>>) -> bool {
         self.previous_state.as_ref() != Some(new_state)
     }
 
-    pub fn update_state(&mut self, new_state: BTreeMap<String, WindowDetails>) {
+    pub fn update_state(&mut self, new_state: BTreeMap<String, ArcIntern<WindowDetails>>) {
         self.previous_state = Some(new_state);
         self.last_update = Instant::now();
     }
@@ -226,7 +227,7 @@ mod tests {
     fn test_window_state_tracker() {
         let mut tracker = WindowStateTracker::new();
         let mut state1 = BTreeMap::new();
-        state1.insert("window1".to_string(), WindowDetails::default());
+        state1.insert("window1".to_string(), ArcIntern::new(WindowDetails::default()));
 
         assert!(tracker.has_state_changed(&state1));
 
@@ -234,7 +235,7 @@ mod tests {
         assert!(!tracker.has_state_changed(&state1));
 
         let mut state2 = BTreeMap::new();
-        state2.insert("window2".to_string(), WindowDetails::default());
+        state2.insert("window2".to_string(), ArcIntern::new(WindowDetails::default()));
         assert!(tracker.has_state_changed(&state2));
     }
 
