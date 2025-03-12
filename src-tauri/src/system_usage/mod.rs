@@ -3,7 +3,7 @@ use nvml_wrapper::Nvml;
 use sysinfo::{MemoryRefreshKind, System};
 use tokio::time;
 
-use crate::config_watcher::AppConfig;
+use crate::fs_watcher::config_watcher::AppConfig;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SystemUsage {

@@ -55,13 +55,8 @@ impl ConfigFile {
 }
 
 pub async fn open_or_create_file() -> ConfigFile {
-    let config_path = match env::var("CONFIG_PATH") {
-        Ok(path) => path,
-        Err(_) => {
-            error!("CONFIG_PATH environment variable is not set. Using default.");
-            return ConfigFile::default();
-        }
-    };
+    let config_path = env::var("CONFIG_PATH")
+        .unwrap_or("%AppData%\\screen_time_tracking_app\\config.json".to_owned());
 
     let config_path = if config_path.contains("%AppData%") {
         match dirs::config_dir() {

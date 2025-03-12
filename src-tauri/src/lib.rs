@@ -7,9 +7,9 @@ use tauri::{
 };
 
 pub mod config;
-pub mod config_watcher;
 pub mod db;
 pub mod error;
+pub mod fs_watcher;
 pub mod logger;
 pub mod platform;
 pub mod system_usage;
@@ -19,7 +19,7 @@ pub mod zero_mq_service;
 use crate::db::connection::DbHandler;
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
-fn greet(name: &str, state: State<'_, Arc<DbHandler>>) -> String {
+fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
@@ -28,6 +28,17 @@ async fn fetch_app_usage_info(
     state: State<'_, Arc<DbHandler>>,
 ) -> Result<Vec<AppUsageQuery>, error::TuariError> {
     Ok(state.get_app_usage_details().await?)
+}
+
+#[tauri::command]
+async fn set_daily_limit(app_name: String, total_minutes: u64) -> Result<String, String> {
+    println!("Setting daily limit for app: {}", app_name);
+    println!("Limit: minutes {}", total_minutes);
+
+    Ok(format!(
+        "Daily limit set for {} {} minutes",
+        app_name, total_minutes
+    ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -40,7 +51,7 @@ pub fn run(db_handler: Arc<DbHandler>) {
             let menu = MenuBuilder::new(app)
                 .items(&[&quit, &hide, &show])
                 .build()?;
-            let tray = TrayIconBuilder::new()
+            TrayIconBuilder::new()
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "quit" => {
@@ -79,7 +90,7 @@ pub fn run(db_handler: Arc<DbHandler>) {
         })
         .manage(Arc::clone(&db_handler))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, fetch_app_usage_info])
+        .invoke_handler(tauri::generate_handler![greet, fetch_app_usage_info, set_daily_limit])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 window.hide().unwrap();

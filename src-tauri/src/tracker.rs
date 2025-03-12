@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 use crate::{
     db::models::{App, AppUsage, IdlePeriod, WindowUsage},
-    platform::{windows::WindowsHandle, AppName, Platform, WindowDetails, WindowDetailsTuple, WindowName},
+    platform::{
+        windows::WindowsHandle, AppName, Platform, WindowDetails, WindowDetailsTuple, WindowName,
+    },
 };
 
 type AppMap = HashMap<ArcIntern<String>, App>;
@@ -114,10 +116,7 @@ impl AppTracker {
                 });
             }
         }
-        match self
-            .previous_window_usage_map
-            .entry(window_title.clone())
-        {
+        match self.previous_window_usage_map.entry(window_title.clone()) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().last_updated_time = current_time;
                 window_id = entry.get().app_id.clone();
@@ -160,10 +159,7 @@ impl AppTracker {
         self.previous_classification_map.insert(app_name.clone());
     }
 
-    fn cleanup_old_entries(
-        &mut self,
-        window_state: &WindowDetailsTuple,
-    ) {
+    fn cleanup_old_entries(&mut self, window_state: &WindowDetailsTuple) {
         self.previous_app_usage_map
             .retain(|key, _| window_state.1.contains_key(key));
         self.previous_window_usage_map

@@ -4,8 +4,8 @@ use std::sync::{Arc, LazyLock};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use crate::config_watcher::ConfigFile;
 use crate::db::{connection::DbHandler, models::ClassificationSerde};
+use crate::fs_watcher::config_watcher::ConfigFile;
 use crate::platform::windows::WindowsHandle;
 use crate::platform::Platform;
 use crate::system_usage::Machine;

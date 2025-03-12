@@ -60,8 +60,8 @@ pub struct AppUsage {
     pub end_time: NaiveDateTime,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppUsageQuery {
     pub app_name: String,
     pub total_hours: f64,

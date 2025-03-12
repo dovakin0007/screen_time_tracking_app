@@ -4,22 +4,23 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, LazyLock},
-    thread,
     time::{Duration, Instant},
 };
 
 use dotenvy::dotenv;
 use internment::ArcIntern;
 use log::{error, info};
-use screen_time_tracking_front_end_lib::config::Config;
-use screen_time_tracking_front_end_lib::config_watcher::{
+use screen_time_tracking_front_end_lib::fs_watcher::config_watcher::{
     open_or_create_file, watcher, ConfigFile,
 };
 use screen_time_tracking_front_end_lib::logger::Logger;
 use screen_time_tracking_front_end_lib::tracker::{AppData, AppTracker};
+use screen_time_tracking_front_end_lib::{
+    config::Config, fs_watcher::start_menu_watcher::start_menu_watcher,
+};
 use tokio::{
-    runtime::Runtime,
     sync::{mpsc, RwLock},
+    task,
 };
 
 use screen_time_tracking_front_end_lib::db::{
@@ -45,11 +46,17 @@ impl WindowStateTracker {
         }
     }
 
-    pub fn has_state_changed(&self, new_state: &BTreeMap<ArcIntern<String>, ArcIntern<WindowDetails>>) -> bool {
+    pub fn has_state_changed(
+        &self,
+        new_state: &BTreeMap<ArcIntern<String>, ArcIntern<WindowDetails>>,
+    ) -> bool {
         self.previous_state.as_ref() != Some(new_state)
     }
 
-    pub fn update_state(&mut self, new_state: BTreeMap<ArcIntern<String>, ArcIntern<WindowDetails>>) {
+    pub fn update_state(
+        &mut self,
+        new_state: BTreeMap<ArcIntern<String>, ArcIntern<WindowDetails>>,
+    ) {
         self.previous_state = Some(new_state);
         self.last_update = Instant::now();
     }
@@ -126,49 +133,50 @@ static APP_CONFIG: LazyLock<RwLock<ConfigFile>> =
     LazyLock::new(|| RwLock::new(ConfigFile::default()));
 
 async fn main2(db_handler: Arc<DbHandler>, config: Config) {
-    let tracker_runtime = Runtime::new().expect("Failed to create tracker runtime");
-    let server_runtime = Runtime::new().expect("Failed to create server runtime");
-    let file_notifier_runtime = Runtime::new().expect("Failed to create watcher runtime");
-    let file_handle = thread::spawn(move || {
-        file_notifier_runtime.block_on(async {
-            let _ = std::mem::replace(
-                &mut APP_CONFIG.write().await.config_message,
-                open_or_create_file().await.config_message,
-            );
-            watcher(&APP_CONFIG).await;
-        });
+    println!("called");
+    let db_handler_2 = Arc::clone(&db_handler);
+    let file_notifier_task = task::spawn(async move {
+        let _ = std::mem::replace(
+            &mut APP_CONFIG.write().await.config_message,
+            open_or_create_file().await.config_message,
+        );
+        let db_handler = Arc::clone(&db_handler_2);
+        let file_watcher = tokio::task::spawn(watcher(&APP_CONFIG));
+        let menu_watcher = task::spawn(start_menu_watcher(Arc::clone(&db_handler)));
+        let (join1, join2) = tokio::join!(file_watcher, menu_watcher);
+        if let Err(e) = join1 {
+            error!("{:?}", e);
+        }
+        if let Err(e) = join2 {
+            error!("{:?}", e);
+        }
     });
+
     let tracker_db = Arc::clone(&db_handler);
-    let tracker_config = config;
-    let tracker_handle = thread::spawn(move || {
-        tracker_runtime.block_on(async {
-            if let Err(e) = tracker_service_main(tracker_db, tracker_config).await {
-                error!("Failed to start tracker service:{:?}", e);
-            }
-        });
+    let tracker_config = config.clone();
+    let tracker_task = task::spawn(async move {
+        if let Err(e) = tracker_service_main(tracker_db, tracker_config).await {
+            error!("Failed to start tracker service:{:?}", e);
+        }
     });
+
     let server_db = Arc::clone(&db_handler);
-    let server_handle = thread::spawn(move || {
-        let (control_sender, control_recv) = tokio::sync::mpsc::channel::<bool>(30);
-        server_runtime.block_on(start_server(
-            server_db,
-            control_sender,
-            control_recv,
-            &APP_CONFIG,
-        ))
+    let (control_sender, control_recv) = tokio::sync::mpsc::channel::<bool>(30);
+    let server_task = task::spawn(async move {
+        let result = start_server(server_db, control_sender, control_recv, &APP_CONFIG).await;
+        result
     });
 
-    if let Err(e) = tracker_handle.join() {
-        error!("Tracker thread panicked: {:?}", e);
+    // Run all tasks concurrently and wait for them to complete
+    let (task1, task2, task3) = tokio::join!(file_notifier_task, tracker_task, server_task);
+    if let Err(e) = task1 {
+        error!("{:?}", e);
     }
-
-    if let Err(e) = file_handle.join() {
-        error!("File config listener panicked: {:?}", e);
+    if let Err(e) = task2 {
+        error!("{:?}", e);
     }
-
-    if let Err(e) = server_handle.join() {
-        error!("Server thread panicked: {:?}", e);
-        std::process::exit(1)
+    if let Err(e) = task3 {
+        error!("{:?}", e);
     }
 }
 
@@ -203,9 +211,8 @@ async fn tracker_service_main(db_handler: Arc<DbHandler>, config: Config) -> any
 
 #[tokio::main]
 async fn main() {
-    tauri::async_runtime::set(tokio::runtime::Handle::current());
     dotenv().ok();
-
+    // Check operating system
     if !cfg!(target_os = "windows") {
         error!("This application is supported only on Windows.");
         return;
@@ -216,8 +223,13 @@ async fn main() {
 
     let db_handler = Arc::new(DbHandler::new(config.db_path.clone()));
     let db_handler_clone = Arc::clone(&db_handler);
-    tokio::spawn(async move {
-        main2(Arc::clone(&db_handler_clone), config).await;
+
+    let backend_runtime = tokio::runtime::Runtime::new().expect("Failed to create backend runtime");
+
+    std::thread::spawn(move || {
+        backend_runtime.block_on(async move { main2(db_handler_clone, config).await });
     });
+
+    tauri::async_runtime::set(tokio::runtime::Handle::current());
     screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
 }

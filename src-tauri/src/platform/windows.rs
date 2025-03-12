@@ -252,3 +252,4 @@ fn is_window_minimized(hwnd: HWND) -> bool {
             .unwrap_or(false)
     }
 }
+

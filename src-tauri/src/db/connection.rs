@@ -12,8 +12,10 @@ use tokio::{
     time::Instant,
 };
 
+use crate::fs_watcher::start_menu_watcher::ShellLinkInfo;
+
 use super::models::{
-    App, AppUsage, AppUsageQuery, ClassificationSerde, IdlePeriod, Sessions, WindowUsage
+    App, AppUsage, AppUsageQuery, ClassificationSerde, IdlePeriod, Sessions, WindowUsage,
 };
 
 const APP_UPSERT_QUERY: &str = r#"
@@ -202,6 +204,38 @@ impl DbHandler {
         )?;
         app_usage_iter.collect()
     }
+
+    pub async fn insert_menu_shell_links(&self, apps: ShellLinkInfo) -> SqliteResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            r#"
+            INSERT INTO shell_link_info (
+                link,
+                target_path,
+                arguments,
+                icon_location,
+                working_directory,
+                description
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(link) DO UPDATE SET
+                target_path = excluded.target_path,
+                arguments = excluded.arguments,
+                icon_location = excluded.icon_location,
+                working_directory = excluded.working_directory,
+                description = excluded.description
+            "#,
+            params![
+                apps.link,
+                apps.target_path,
+                apps.arguments,
+                apps.icon_location,
+                apps.working_directory,
+                apps.description
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -293,7 +327,10 @@ async fn process_updates(
 
     debug!("Processing {} apps", apps.len());
     for app in apps.values() {
-        match tx.execute(APP_UPSERT_QUERY, params![app.name.to_string(), app.path.to_string()]) {
+        match tx.execute(
+            APP_UPSERT_QUERY,
+            params![app.name.to_string(), app.path.to_string()],
+        ) {
             Ok(_) => debug!("Successfully upserted app: {}", app.name),
             Err(err) => {
                 error!("Failed to upsert app '{}': {}", app.name, err);
@@ -359,7 +396,10 @@ async fn process_updates(
 
     debug!("Processing {} classifications", classifications.len());
     for classification in classifications {
-        match tx.execute(CLASSIFICATION_UPSET_QUERY, params![classification.to_string()]) {
+        match tx.execute(
+            CLASSIFICATION_UPSET_QUERY,
+            params![classification.to_string()],
+        ) {
             Ok(_) => debug!(
                 "Successfully upserted classification for: {}",
                 classification
