@@ -207,10 +207,10 @@ function App() {
           <Box sx={{ mb: 4, p: 3, borderRadius: "12px", background: "#ffffff", boxShadow: 3 }}>
             <Typography variant="h6" gutterBottom>Select Date Range</Typography>
             <Grid container spacing={3}>
-              <Grid item xs={12} sm={6}>
+              <Grid size={{xs:12, sm:6}}>
                 <DatePicker label="Start Date" value={startDate} onChange={handleStartDateChange} format="YYYY-MM-DD" sx={{ width: "100%" }} />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid size={{xs:12, sm:6}}>
                 <DatePicker label="End Date" value={endDate} onChange={handleEndDateChange} format="YYYY-MM-DD" sx={{ width: "100%" }} />
               </Grid>
             </Grid>
@@ -240,7 +240,7 @@ function App() {
           {appUsageInfo && appUsageInfo.length > 0 && (
             <Grid container spacing={3} direction="column">
               {appUsageInfo.map((val, idx) => (
-                <Grid item key={idx}>
+                <Grid key={idx}>
                   <Paper elevation={3} sx={{ p: 2, borderRadius: 4, transition: "all 0.3s", "&:hover": { transform: "scale(1.02)", boxShadow: 6, backgroundColor: "#f3f4f6" } }}>
                     <AppUsageCard {...val} />
                   </Paper>

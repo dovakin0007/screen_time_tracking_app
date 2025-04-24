@@ -27,7 +27,7 @@ interface Props {
   onToggle: () => void;
   onLaunch: (link: string) => void;
   launchCount?: number;
-  lastLaunched?: string;
+  lastLaunched?: string | null;
 }
 
 const AppLauncherCard: React.FC<Props> = ({
@@ -46,7 +46,7 @@ const AppLauncherCard: React.FC<Props> = ({
   return (
     <>
       <ListItem
-        button
+        component="button"
         onClick={onToggle}
         secondaryAction={
           <IconButton edge="end">

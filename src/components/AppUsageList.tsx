@@ -109,7 +109,7 @@ function AppUsageInfo(props: IAppUsageInfo) {
   };
 
   const handleAlertDurationChange = (
-    event: Event,
+    _event: Event,
     newValue: number | number[],
   ) => {
     setAlertDuration(newValue as number);
@@ -247,7 +247,7 @@ function AppUsageInfo(props: IAppUsageInfo) {
           {/* Slightly different background for content */}
           {/* Stats Section */}
           <Grid container spacing={2} sx={{ marginBottom: 3 }}>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               {/* Full width on small screens, 1/3 on sm+ */}
               <Paper
                 elevation={0}
@@ -266,7 +266,7 @@ function AppUsageInfo(props: IAppUsageInfo) {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               {/* Full width on small screens, 1/3 on sm+ */}
               <Paper
                 elevation={0}
@@ -287,7 +287,7 @@ function AppUsageInfo(props: IAppUsageInfo) {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid size={{ xs: 12, sm: 4 }}>
               {/* Full width on small screens, 1/3 on sm+ */}
               <Paper
                 elevation={0}
@@ -322,7 +322,7 @@ function AppUsageInfo(props: IAppUsageInfo) {
               Daily Time Limit
             </Typography>
             <Grid container spacing={2}>
-              <Grid item xs={6}>
+              <Grid size={{ xs: 6 }}>
                 <TextField
                   label="Hours"
                   type="number"
@@ -340,7 +340,7 @@ function AppUsageInfo(props: IAppUsageInfo) {
                   variant="outlined"
                 />
               </Grid>
-              <Grid item xs={6}>
+              <Grid size={{ xs: 6 }}>
                 <TextField
                   label="Minutes"
                   type="number"
