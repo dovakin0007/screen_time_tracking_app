@@ -67,4 +67,9 @@ pub struct AppUsageQuery {
     pub total_hours: f64,
     pub idle_hours: f64,
     pub active_percentage: Option<f64>,
+    pub time_limit: Option<u32>,
+    pub should_alert: Option<bool>,
+    pub should_close: Option<bool>,
+    pub alert_before_close: Option<bool>,
+    pub alert_duration: Option<u32>,
 }

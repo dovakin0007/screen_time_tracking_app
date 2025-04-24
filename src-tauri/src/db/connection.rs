@@ -1,10 +1,10 @@
-use chrono::{Duration, Local};
+use chrono::{Local, NaiveDate};
 use internment::ArcIntern;
 use log::{debug, error};
 use rusqlite::{params, Connection, Result as SqliteResult};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::{
@@ -39,6 +39,13 @@ const USAGE_UPSERT_QUERY: &str = r#"
         last_updated_time = excluded.last_updated_time
 "#;
 
+const UPSET_TIME_LIMIT: &str = r#"
+    INSERT INTO daily_limits (
+            app_name, time_limit, should_alert, should_close, alert_before_close, alert_duration
+        ) VALUES (?1, 60, 0, 0, 0, 360)
+        ON CONFLICT(app_name) DO NOTHING
+"#;
+
 const SESSION_UPSET_QUERY: &str = r#"
         INSERT INTO sessions (id, date)
         VALUES (?1, ?2)
@@ -52,38 +59,95 @@ const CLASSIFICATION_UPSET_QUERY: &str = r#"
     "#;
 
 const APP_USAGE_QUERY: &str = r#"
-WITH app_total AS (
+    WITH app_total AS (
+        SELECT 
+            app_name,
+            SUM(
+                CASE 
+                    WHEN end_time IS NULL THEN 
+                        strftime('%s', 'now') - strftime('%s', start_time)
+                    ELSE 
+                        strftime('%s', end_time) - strftime('%s', start_time)
+                END
+            ) AS total_seconds
+        FROM app_usage_time_period
+        WHERE DATE(start_time) BETWEEN :previous_date AND :current_date
+        GROUP BY app_name
+    ),
+    app_idle AS (
+        SELECT 
+            app_name,
+            COUNT(*) AS idle_count,
+            SUM(strftime('%s', end_time) - strftime('%s', start_time)) AS idle_seconds
+        FROM app_idle_time_period
+        WHERE DATE(start_time) BETWEEN :previous_date AND :current_date
+        GROUP BY app_name
+    )
     SELECT 
-        app_name,
-        SUM(
-            CASE 
-                WHEN end_time IS NULL THEN 
-                    strftime('%s', 'now') - strftime('%s', start_time)
-                ELSE 
-                    strftime('%s', end_time) - strftime('%s', start_time)
-            END
-        ) as total_seconds
-    FROM app_usage_time_period
-    WHERE DATE(start_time) BETWEEN :previous_date AND :current_date
-    GROUP BY app_name
-),
-app_idle AS (
+        t.app_name AS AppName,
+        ROUND(t.total_seconds / 3600.0, 2) AS TotalHours,
+        ROUND(COALESCE(i.idle_seconds, 0) / 3600.0, 2) AS IdleHours,
+        CASE 
+            WHEN t.total_seconds > 0 
+            THEN ROUND(((t.total_seconds - COALESCE(i.idle_seconds, 0)) * 100.0 / t.total_seconds), 2) 
+            ELSE NULL 
+        END AS ActivePercentage,
+        dl.time_limit AS TimeLimit,
+        dl.should_alert AS ShouldAlert,
+        dl.should_close AS ShouldClose,
+        dl.alert_before_close AS AlertBeforeClose,
+        dl.alert_duration AS AlertDuration
+    FROM app_total t
+    LEFT JOIN app_idle i ON t.app_name = i.app_name
+    LEFT JOIN daily_limits dl ON t.app_name = dl.app_name
+    ORDER BY TotalHours DESC;
+    "#;
+
+const APP_USAGE_QUERY_APP_NAME: &str = r#"
+    WITH app_total AS (
+        SELECT 
+            app_name,
+            SUM(
+                CASE 
+                    WHEN end_time IS NULL THEN 
+                        strftime('%s', 'now') - strftime('%s', start_time)
+                    ELSE 
+                        strftime('%s', end_time) - strftime('%s', start_time)
+                END
+            ) AS total_seconds
+        FROM app_usage_time_period
+        WHERE DATE(start_time) BETWEEN :previous_date AND :current_date
+          AND (:app_name IS NULL OR app_name = :app_name)
+        GROUP BY app_name
+    ),
+    app_idle AS (
+        SELECT 
+            app_name,
+            COUNT(*) AS idle_count,
+            SUM(strftime('%s', end_time) - strftime('%s', start_time)) AS idle_seconds
+        FROM app_idle_time_period
+        WHERE DATE(start_time) BETWEEN :previous_date AND :current_date
+          AND (:app_name IS NULL OR app_name = :app_name)
+        GROUP BY app_name
+    )
     SELECT 
-        app_name,
-        COUNT(*) as idle_count,
-        SUM(strftime('%s', end_time) - strftime('%s', start_time)) as idle_seconds
-    FROM app_idle_time_period
-    WHERE DATE(start_time) BETWEEN :previous_date AND :current_date
-    GROUP BY app_name
-)
-SELECT 
-    t.app_name as AppName,
-    ROUND(t.total_seconds / 3600.0, 2) as TotalHours,
-    ROUND(COALESCE(i.idle_seconds, 0) / 3600.0, 2) as IdleHours,
-    ROUND(((t.total_seconds - COALESCE(i.idle_seconds, 0)) * 100.0 / t.total_seconds), 2) as ActivePercentage
-FROM app_total t
-LEFT JOIN app_idle i ON t.app_name = i.app_name
-ORDER BY TotalHours DESC;
+        t.app_name AS AppName,
+        ROUND(t.total_seconds / 3600.0, 2) AS TotalHours,
+        ROUND(COALESCE(i.idle_seconds, 0) / 3600.0, 2) AS IdleHours,
+        CASE 
+            WHEN t.total_seconds > 0 
+            THEN ROUND(((t.total_seconds - COALESCE(i.idle_seconds, 0)) * 100.0 / t.total_seconds), 2) 
+            ELSE NULL 
+        END AS ActivePercentage,
+        dl.time_limit AS TimeLimit,
+        dl.should_alert AS ShouldAlert,
+        dl.should_close AS ShouldClose,
+        dl.alert_before_close AS AlertBeforeClose,
+        dl.alert_duration AS AlertDuration
+    FROM app_total t
+    LEFT JOIN app_idle i ON t.app_name = i.app_name
+    LEFT JOIN daily_limits dl ON t.app_name = dl.app_name
+    ORDER BY TotalHours DESC;
 "#;
 
 type ReceiveUsageInfo = mpsc::UnboundedReceiver<(
@@ -183,11 +247,45 @@ impl DbHandler {
             }
         }
     }
-    pub async fn get_app_usage_details(&self) -> SqliteResult<Vec<AppUsageQuery>> {
+    pub async fn get_app_usage_details(
+        &self,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+    ) -> SqliteResult<Vec<AppUsageQuery>> {
         let conn = self.conn.lock().await;
+
         let mut stmt = conn.prepare(APP_USAGE_QUERY)?;
+
+        let app_usage_iter = stmt.query_map(
+            &[
+                (":current_date", end_date.to_string().as_str()),
+                (":previous_date", start_date.to_string().as_str()),
+            ],
+            |row| {
+                Ok(AppUsageQuery {
+                    app_name: row.get(0)?,
+                    total_hours: row.get(1)?,
+                    idle_hours: row.get(2)?,
+                    active_percentage: row.get(3).ok(),
+                    time_limit: row.get(4).ok(),
+                    should_alert: row.get(5).ok(),
+                    should_close: row.get(6).ok(),
+                    alert_before_close: row.get(7).ok(),
+                    alert_duration: row.get(8).ok(),
+                })
+            },
+        )?;
+
+        app_usage_iter.collect()
+    }
+
+    pub async fn get_current_app_usage_details(&self) -> SqliteResult<Vec<AppUsageQuery>> {
+        let conn = self.conn.lock().await;
+
+        let mut stmt = conn.prepare(APP_USAGE_QUERY_APP_NAME)?;
         let current_date = Local::now().date_naive();
-        let seven_days_ago = current_date - Duration::days(7);
+        let seven_days_ago = current_date;
+
         let app_usage_iter = stmt.query_map(
             &[
                 (":current_date", current_date.to_string().as_str()),
@@ -199,10 +297,78 @@ impl DbHandler {
                     total_hours: row.get(1)?,
                     idle_hours: row.get(2)?,
                     active_percentage: row.get(3).ok(),
+                    time_limit: row.get(4).ok(),
+                    should_alert: row.get(5).ok(),
+                    should_close: row.get(6).ok(),
+                    alert_before_close: row.get(7).ok(),
+                    alert_duration: row.get(8).ok(),
                 })
             },
         )?;
+
         app_usage_iter.collect()
+    }
+
+    pub async fn insert_update_app_limits(
+        &self,
+        app_name: &str,
+        time_limit: u32,
+        should_alert: bool,
+        should_close: bool,
+        alert_before_close: bool,
+        alert_duration: u32,
+    ) -> SqliteResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO daily_limits (app_name, time_limit, should_alert, should_close, alert_before_close, alert_duration)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(app_name)
+             DO UPDATE SET
+                time_limit = excluded.time_limit,
+                should_alert = excluded.should_alert,
+                should_close = excluded.should_close,
+                alert_before_close = excluded.alert_before_close,
+                alert_duration = excluded.alert_duration",
+            params![app_name, time_limit, should_alert, should_close, alert_before_close, alert_duration],
+        )?;
+        Ok(())
+    }
+
+    pub async fn get_specific_app_details(
+        &self,
+        app_name: &str,
+    ) -> Result<AppUsageQuery, rusqlite::Error> {
+        let app_name = app_name;
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(APP_USAGE_QUERY_APP_NAME)?;
+        let current_date = Local::now().date_naive();
+        let seven_days_ago = current_date;
+        let mut app_usage_iter = stmt.query_map(
+            &[
+                (":app_name", app_name),
+                (":current_date", current_date.to_string().as_str()),
+                (":previous_date", seven_days_ago.to_string().as_str()),
+            ],
+            |row| {
+                Ok(AppUsageQuery {
+                    app_name: row.get(0)?,
+                    total_hours: row.get(1)?,
+                    idle_hours: row.get(2)?,
+                    active_percentage: row.get(3).ok(),
+                    time_limit: row.get(4).ok(),
+                    should_alert: row.get(5).ok(),
+                    should_close: row.get(6).ok(),
+                    alert_before_close: row.get(7).ok(),
+                    alert_duration: row.get(8).ok(),
+                })
+            },
+        )?;
+
+        match app_usage_iter.next() {
+            Some(Ok(v)) => Ok(v),
+            Some(Err(e)) => Err(e),
+            None => Err(rusqlite::Error::InvalidQuery),
+        }
     }
 
     pub async fn insert_menu_shell_links(&self, apps: ShellLinkInfo) -> SqliteResult<()> {
@@ -213,7 +379,7 @@ impl DbHandler {
                 link,
                 target_path,
                 arguments,
-                icon_location,
+                icon_base64_image,
                 working_directory,
                 description
             )
@@ -221,7 +387,7 @@ impl DbHandler {
             ON CONFLICT(link) DO UPDATE SET
                 target_path = excluded.target_path,
                 arguments = excluded.arguments,
-                icon_location = excluded.icon_location,
+                icon_base64_image = excluded.icon_base64_image,
                 working_directory = excluded.working_directory,
                 description = excluded.description
             "#,
@@ -229,12 +395,61 @@ impl DbHandler {
                 apps.link,
                 apps.target_path,
                 apps.arguments,
-                apps.icon_location,
+                apps.icon_base64_image,
                 apps.working_directory,
                 apps.description
             ],
         )?;
         Ok(())
+    }
+
+    pub async fn get_all_menu_paths(&self) -> SqliteResult<Vec<PathBuf>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare("SELECT link FROM shell_link_info")?;
+
+        let rows = stmt.query_map([], |row| {
+            let link_path: String = row.get(0)?;
+            Ok(PathBuf::from(link_path))
+        })?;
+
+        let mut paths = Vec::new();
+        for row in rows {
+            paths.push(row?);
+        }
+
+        Ok(paths)
+    }
+
+    pub async fn delete_menu_shell_link(&self, path: &Path) -> SqliteResult<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "DELETE FROM shell_link_info WHERE link = ?1",
+            params![path.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
+    pub async fn get_all_shell_links(&self) -> SqliteResult<Vec<ShellLinkInfo>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+        .prepare("SELECT link, target_path, arguments, icon_base64_image, working_directory, description FROM shell_link_info")?;
+
+        let shell_links_iter = stmt.query_map([], |row| {
+            Ok(ShellLinkInfo {
+                link: row.get(0)?,
+                target_path: row.get(1)?,
+                arguments: row.get(2)?,
+                icon_base64_image: row.get(3)?,
+                working_directory: row.get(4)?,
+                description: row.get(5)?,
+            })
+        })?;
+
+        let mut shell_links = Vec::new();
+        for link in shell_links_iter {
+            shell_links.push(link?);
+        }
+        return Ok(shell_links);
     }
 }
 
@@ -334,6 +549,14 @@ async fn process_updates(
             Ok(_) => debug!("Successfully upserted app: {}", app.name),
             Err(err) => {
                 error!("Failed to upsert app '{}': {}", app.name, err);
+                return Err(err);
+            }
+        }
+
+        match tx.execute(UPSET_TIME_LIMIT, params![app.name.to_string()]) {
+            Ok(_) => debug!("Successfully upserted app: {}", app.name),
+            Err(err) => {
+                error!("Failed to upsert limit info '{}': {}", app.name, err);
                 return Err(err);
             }
         }

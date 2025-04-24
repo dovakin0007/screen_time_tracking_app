@@ -2,4 +2,4 @@
 # see https://diesel.rs/guides/configuring-diesel-cli
 
 [migrations_directory]
-dir = "C:\\screen_time_tracking_app\\migrations"
+dir = "C:\\Tauri-app\\screen_time_tracking_app\\src-tauri\\migrations"

@@ -1,6 +1,3 @@
-#[cfg(target_os = "windows")]
-extern crate winres;
-
 extern crate diesel;
 extern crate diesel_migrations;
 use build_print::println;
@@ -11,7 +8,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
 
 fn establish_connection() -> SqliteConnection {
     dotenv().ok();
@@ -46,25 +43,31 @@ fn main() {
     let mut connection = establish_connection();
     println!("Database connection established successfully!");
     run_migrations(&mut connection);
-    if cfg!(target_os = "windows") && std::env::var("PROFILE").ok().as_deref() == Some("release") {
-        let mut res = winres::WindowsResource::new();
-        res.set_manifest(
-            r#"
+    let windows = tauri_build::WindowsAttributes::new().app_manifest(
+        r#"
     <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-        <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
-        <security>
-            <requestedPrivileges>
-                <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
-            </requestedPrivileges>
-        </security>
-    </trustInfo>
-    </assembly>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+        <requestedPrivileges>
+            <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>
     "#,
-        );
-        if let Err(error) = res.compile() {
-            eprintln!("Error: {}", error);
-            std::process::exit(1);
-        }
-    }
-    tauri_build::build()
+    );
+    let attrs = tauri_build::Attributes::new().windows_attributes(windows);
+    tauri_build::try_build(attrs).expect("build failed");
 }

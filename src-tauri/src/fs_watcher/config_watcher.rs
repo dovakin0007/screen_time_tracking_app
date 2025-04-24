@@ -10,7 +10,9 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
 };
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+use super::config_visitor::AppConfigVisitor;
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct AppConfig {
     pub cpu_threshold: f32,
     pub gpu_threshold: f32,
@@ -21,13 +23,34 @@ pub struct AppConfig {
     pub idle_threshold_period: u64,
 }
 
+impl<'de> Deserialize<'de> for AppConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_struct(
+            "AppConfig",
+            &[
+                "cpu_threshold",
+                "gpu_threshold",
+                "ram_usage",
+                "gpu_ram",
+                "timeout",
+                "db_update_interval",
+                "idle_threshold_period",
+            ],
+            AppConfigVisitor,
+        )
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             cpu_threshold: 25.0,
             gpu_threshold: 15.0,
             ram_usage: 75.0,
-            gpu_ram: 150.0,
+            gpu_ram: 10.0,
             timeout: 900,
             db_update_interval: 30,
             idle_threshold_period: 60,
@@ -167,5 +190,76 @@ pub async fn watcher(config: &'static LazyLock<RwLock<ConfigFile>>) {
 
     while let Some(res) = receiver.recv().await {
         *config.write().await = res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn test_app_config_deserialization() {
+        let json_data = r#"
+        {
+            "cpu_threshold": 50.0,
+            "gpu_threshold": 75.0,
+            "ram_usage": 60.0,
+            "gpu_ram": 80.0,
+            "timeout": 1800,
+            "db_update_interval": 300,
+            "idle_threshold_period": 600
+        }
+        "#;
+
+        let config: AppConfig = serde_json::from_str(json_data).expect("Failed to deserialize");
+
+        assert_eq!(config.cpu_threshold, 50.0);
+        assert_eq!(config.gpu_threshold, 75.0);
+        assert_eq!(config.ram_usage, 60.0);
+        assert_eq!(config.gpu_ram, 80.0);
+        assert_eq!(config.timeout, 1800);
+        assert_eq!(config.db_update_interval, 300);
+        assert_eq!(config.idle_threshold_period, 600);
+    }
+
+    #[test]
+    fn test_clamping_behavior() {
+        let json_data = r#"
+        {
+            "cpu_threshold": 0.0,
+            "gpu_threshold": 150.0,
+            "ram_usage": -10.0,
+            "gpu_ram": 101.0,
+            "timeout": 100,
+            "db_update_interval": 1000,
+            "idle_threshold_period": 5
+        }
+        "#;
+
+        let config: AppConfig = serde_json::from_str(json_data).expect("Failed to deserialize");
+
+        // Clamping applied
+        assert_eq!(config.cpu_threshold, 1.0); // min clamp
+        assert_eq!(config.gpu_threshold, 100.0); // max clamp
+        assert_eq!(config.ram_usage, 1.0); // min clamp
+        assert_eq!(config.gpu_ram, 100.0); // max clamp
+        assert_eq!(config.timeout, 900); // min clamp
+        assert_eq!(config.db_update_interval, 900); // max clamp
+        assert_eq!(config.idle_threshold_period, 30); // min clamp
+    }
+
+    #[test]
+    fn test_missing_field_error() {
+        let json_data = r#"
+        {
+            "cpu_threshold": 50.0
+            // missing other fields
+        }
+        "#;
+
+        let result: Result<AppConfig, _> = serde_json::from_str(json_data);
+
+        assert!(result.is_err());
     }
 }

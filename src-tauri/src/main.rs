@@ -3,21 +3,25 @@
 
 use std::{
     collections::BTreeMap,
+    ffi::OsStr,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 
 use dotenvy::dotenv;
 use internment::ArcIntern;
-use log::{error, info};
+use log::{debug, error, info};
 use screen_time_tracking_front_end_lib::fs_watcher::config_watcher::{
     open_or_create_file, watcher, ConfigFile,
 };
-use screen_time_tracking_front_end_lib::logger::Logger;
 use screen_time_tracking_front_end_lib::tracker::{AppData, AppTracker};
 use screen_time_tracking_front_end_lib::{
     config::Config, fs_watcher::start_menu_watcher::start_menu_watcher,
 };
+use screen_time_tracking_front_end_lib::{
+    logger::Logger, platform::windows::spawn_toast_notification,
+};
+use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tokio::{
     sync::{mpsc, RwLock},
     task,
@@ -31,7 +35,6 @@ use screen_time_tracking_front_end_lib::platform::{
     windows::WindowsHandle, Platform, WindowDetails,
 };
 use screen_time_tracking_front_end_lib::zero_mq_service::start_server;
-
 #[derive(Debug)]
 pub struct WindowStateTracker {
     previous_state: Option<BTreeMap<ArcIntern<String>, ArcIntern<WindowDetails>>>,
@@ -133,7 +136,6 @@ static APP_CONFIG: LazyLock<RwLock<ConfigFile>> =
     LazyLock::new(|| RwLock::new(ConfigFile::default()));
 
 async fn main2(db_handler: Arc<DbHandler>, config: Config) {
-    println!("called");
     let db_handler_2 = Arc::clone(&db_handler);
     let file_notifier_task = task::spawn(async move {
         let _ = std::mem::replace(
@@ -166,9 +168,66 @@ async fn main2(db_handler: Arc<DbHandler>, config: Config) {
         let result = start_server(server_db, control_sender, control_recv, &APP_CONFIG).await;
         result
     });
+    let app_task_db_handler = Arc::clone(&db_handler);
 
-    // Run all tasks concurrently and wait for them to complete
-    let (task1, task2, task3) = tokio::join!(file_notifier_task, tracker_task, server_task);
+    let app_manager_task = task::spawn(async move {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+        );
+        // let process_count = HashMap::new();
+        let mut seconds = 0;
+        loop {
+            let start = Instant::now();
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+            let app_details = app_task_db_handler
+                .get_current_app_usage_details()
+                .await
+                .unwrap();
+            for app_detail in app_details {
+                let exe_name = OsStr::new(&app_detail.app_name);
+
+                let process_list = sys.processes_by_exact_name(exe_name);
+
+                for process in process_list {
+                    if exe_name == process.name() {
+                        let limit = app_detail.time_limit.unwrap_or(0) as f64;
+                        let total_spent = app_detail.total_hours * 60.0;
+                        if total_spent >= limit {
+                            if app_detail.should_close.unwrap_or(false) {
+                                let result = process.kill();
+                                debug!(
+                                    "process killed successfully {:?}: {}",
+                                    app_detail.app_name, result
+                                );
+                            } else if app_detail.should_alert.unwrap_or(false)
+                                && (seconds % app_detail.alert_duration.unwrap_or(300) == 0)
+                            {
+                                let exe_name_str = exe_name.to_str().unwrap().to_string();
+                                let v = spawn_toast_notification(
+                                    exe_name_str,
+                                    Arc::clone(&app_task_db_handler),
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let sleep_duration =
+                TRACKING_INTERVAL_MS.saturating_sub(start.elapsed().as_millis() as u64);
+            tokio::time::sleep(Duration::from_millis(sleep_duration)).await;
+            seconds += 1;
+        }
+    });
+
+    let (task1, task2, task3, task4) = tokio::join!(
+        file_notifier_task,
+        tracker_task,
+        server_task,
+        app_manager_task,
+    );
     if let Err(e) = task1 {
         error!("{:?}", e);
     }
@@ -176,6 +235,10 @@ async fn main2(db_handler: Arc<DbHandler>, config: Config) {
         error!("{:?}", e);
     }
     if let Err(e) = task3 {
+        error!("{:?}", e);
+    }
+
+    if let Err(e) = task4 {
         error!("{:?}", e);
     }
 }
@@ -225,11 +288,12 @@ async fn main() {
     let db_handler_clone = Arc::clone(&db_handler);
 
     let backend_runtime = tokio::runtime::Runtime::new().expect("Failed to create backend runtime");
-
     std::thread::spawn(move || {
         backend_runtime.block_on(async move { main2(db_handler_clone, config).await });
     });
 
-    tauri::async_runtime::set(tokio::runtime::Handle::current());
+    let tauri_runtime =
+        tokio::runtime::Runtime::new().expect("Failed to create seperate runtime for tauri");
+    tauri::async_runtime::set(tauri_runtime.handle().to_owned());
     screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
 }

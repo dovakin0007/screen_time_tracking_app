@@ -1,4 +1,7 @@
+use chrono::NaiveDate;
 use db::models::AppUsageQuery;
+use error::TuariError;
+use fs_watcher::start_menu_watcher::ShellLinkInfo;
 use std::sync::Arc;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -6,6 +9,7 @@ use tauri::{
     Manager, State,
 };
 
+pub mod application_watcher;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -17,33 +21,100 @@ pub mod tracker;
 pub mod zero_mq_service;
 
 use crate::db::connection::DbHandler;
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 #[tauri::command]
 async fn fetch_app_usage_info(
+    start_date: NaiveDate,
+    end_date: NaiveDate,
     state: State<'_, Arc<DbHandler>>,
 ) -> Result<Vec<AppUsageQuery>, error::TuariError> {
-    Ok(state.get_app_usage_details().await?)
+    Ok(state.get_app_usage_details(start_date, end_date).await?)
 }
 
 #[tauri::command]
-async fn set_daily_limit(app_name: String, total_minutes: u64) -> Result<String, String> {
-    println!("Setting daily limit for app: {}", app_name);
-    println!("Limit: minutes {}", total_minutes);
+async fn fetch_shell_links(
+    state: State<'_, Arc<DbHandler>>,
+) -> Result<Vec<ShellLinkInfo>, error::TuariError> {
+    Ok(state.get_all_shell_links().await?)
+}
 
-    Ok(format!(
-        "Daily limit set for {} {} minutes",
-        app_name, total_minutes
-    ))
+#[tauri::command]
+async fn start_app(link: &str) -> Result<(), error::TuariError> {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", link])
+        .spawn()
+        .map_err(|e| error::TuariError::LaunchError(e.to_string()))?;
+    _ = status;
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_daily_limit(
+    app_name: String,
+    total_minutes: u32,
+    should_alert: bool,
+    should_close: bool,
+    alert_before_close: bool,
+    alert_duration: u32,
+    state: State<'_, Arc<DbHandler>>,
+) -> Result<String, TuariError> {
+    match (should_alert, should_close) {
+        (true, true) => Err(TuariError::OptionError(String::from(
+            "can't set alert and close at the same time",
+        ))),
+        (true, false) => {
+            state
+                .insert_update_app_limits(
+                    &app_name,
+                    total_minutes,
+                    should_alert,
+                    false,
+                    false,
+                    alert_duration,
+                )
+                .await?;
+            Ok(format!(
+                "Daily limit set for {} {} minutes",
+                app_name, total_minutes
+            ))
+        }
+        (false, true) => {
+            state
+                .insert_update_app_limits(
+                    &app_name,
+                    total_minutes,
+                    false,
+                    should_close,
+                    alert_before_close,
+                    alert_duration,
+                )
+                .await?;
+            Ok(format!(
+                "Daily limit set for {} {} minutes",
+                app_name, total_minutes
+            ))
+        }
+        (false, false) => {
+            state
+                .insert_update_app_limits(
+                    &app_name,
+                    total_minutes,
+                    should_alert,
+                    false,
+                    alert_before_close,
+                    alert_duration,
+                )
+                .await?;
+            Ok(format!("Removed Daily for {}", app_name))
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(db_handler: Arc<DbHandler>) {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .any_thread()
         .setup(|app| {
             let quit = MenuItemBuilder::with_id("quit", "Quit Program").build(app)?;
             let hide = MenuItemBuilder::with_id("hide", "Close to tray").build(app)?;
@@ -90,7 +161,12 @@ pub fn run(db_handler: Arc<DbHandler>) {
         })
         .manage(Arc::clone(&db_handler))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, fetch_app_usage_info, set_daily_limit])
+        .invoke_handler(tauri::generate_handler![
+            fetch_app_usage_info,
+            set_daily_limit,
+            fetch_shell_links,
+            start_app,
+        ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 window.hide().unwrap();
