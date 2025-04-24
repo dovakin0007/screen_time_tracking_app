@@ -126,7 +126,7 @@ pub fn run(db_handler: Arc<DbHandler>) {
             app.handle()
                 .plugin(tauri_plugin_autostart::init(
                     MacosLauncher::LaunchAgent,
-                    None,
+                    Some(vec!["--flag1", "--flag2"]),
                 ))
                 .unwrap();
             let autostart_manager = app.autolaunch();

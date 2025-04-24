@@ -40,7 +40,6 @@ const AppLauncherCard: React.FC<Props> = ({
 }) => {
   const [iconError, setIconError] = useState(false);
 
-  // Extract base name without .lnk extension using simple string manipulation
   const appName = app.link.split("\\").pop()?.replace(/\.lnk$/i, "") || "App";
 
   return (

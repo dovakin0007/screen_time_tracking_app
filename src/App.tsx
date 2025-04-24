@@ -98,39 +98,39 @@ function App() {
   const [sortAscending, setSortAscending] = useState(true);
 
   useEffect(() => {
-    async function loadLinks() {
-      try {
-        const links: ShellLinkInfo[] = await invoke("fetch_shell_links");
-        setShellLinks(links);
-        console.log(links);
-        const map: Record<
-          string,
-          { count: number; lastLaunched: string | null }
-        > = {};
-        for (const link of links) {
-          const data = await launcher_store.get<
-            { count: number; lastLaunched: string }
-          >(link.link);
-          map[link.link] = {
-            count: data?.count || 0,
-            lastLaunched: data?.lastLaunched || null,
-          };
+    const timeout = setTimeout(() => {
+      async function loadLinks() {
+        try {
+          const links: ShellLinkInfo[] = await invoke("fetch_shell_links");
+          setShellLinks(links);
+          console.log(links);
+          const map: Record<
+            string,
+            { count: number; lastLaunched: string | null }
+          > = {};
+          for (const link of links) {
+            const data = await launcher_store.get<{
+              count: number;
+              lastLaunched: string;
+            }>(link.link);
+            map[link.link] = {
+              count: data?.count || 0,
+              lastLaunched: data?.lastLaunched || null,
+            };
+          }
+          setLaunchDataMap(map);
+        } catch (e) {
+          console.error("Failed to load shell links:", e);
+        } finally {
+          setLoadingShellLinks(false);
         }
-        setLaunchDataMap(map);
-      } catch (e) {
-        console.error("Failed to load shell links:", e);
-      } finally {
-        setLoadingShellLinks(false);
       }
-    }
 
-    // Call the loadLinks function initially and then every 1 second
-    loadLinks();
-    const interval = setInterval(loadLinks, 1000);
+      loadLinks();
+    }, 10000); // 10 seconds
 
-    // Cleanup interval on component unmount
     return () => {
-      clearInterval(interval);
+      clearTimeout(timeout);
     };
   }, []);
 
