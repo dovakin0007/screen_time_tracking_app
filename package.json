@@ -17,6 +17,7 @@
     "@mui/styles": "^6.4.8",
     "@mui/x-date-pickers": "^8.0.0-beta.3",
     "@tailwindcss/vite": "^4.0.13",
+    "@tauri-apps/plugin-autostart": "~2.3.0",
     "@tauri-apps/plugin-store": "~2.2.0",
     "@types/node": "^22.14.1",
     "class-variance-authority": "^0.7.1",

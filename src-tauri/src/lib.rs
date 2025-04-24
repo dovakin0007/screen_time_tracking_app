@@ -1,15 +1,19 @@
-use chrono::NaiveDate;
-use db::models::AppUsageQuery;
-use error::TuariError;
-use fs_watcher::start_menu_watcher::ShellLinkInfo;
 use std::sync::Arc;
+
+use chrono::NaiveDate;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, State,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
-pub mod application_watcher;
+use db::models::AppUsageQuery;
+use error::TuariError;
+use fs_watcher::start_menu_watcher::ShellLinkInfo;
+
+use crate::db::connection::DbHandler;
+
 pub mod config;
 pub mod db;
 pub mod error;
@@ -19,8 +23,6 @@ pub mod platform;
 pub mod system_usage;
 pub mod tracker;
 pub mod zero_mq_service;
-
-use crate::db::connection::DbHandler;
 
 #[tauri::command]
 async fn fetch_app_usage_info(
@@ -116,9 +118,18 @@ pub fn run(db_handler: Arc<DbHandler>) {
         .plugin(tauri_plugin_store::Builder::new().build())
         .any_thread()
         .setup(|app| {
+            #[cfg(desktop)]
             let quit = MenuItemBuilder::with_id("quit", "Quit Program").build(app)?;
             let hide = MenuItemBuilder::with_id("hide", "Close to tray").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            app.handle()
+                .plugin(tauri_plugin_autostart::init(
+                    MacosLauncher::LaunchAgent,
+                    None,
+                ))
+                .unwrap();
+            let autostart_manager = app.autolaunch();
+            let _ = autostart_manager.enable();
             let menu = MenuBuilder::new(app)
                 .items(&[&quit, &hide, &show])
                 .build()?;

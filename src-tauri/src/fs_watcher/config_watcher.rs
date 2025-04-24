@@ -1,13 +1,12 @@
+use std::{env, io::ErrorKind, path::Path, sync::LazyLock};
+
 use log::error;
 use notify::{Config, Error, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::io::ErrorKind;
-use std::sync::LazyLock;
-use std::{env, path::Path};
-use tokio::sync::{mpsc, RwLock};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
+    sync::{mpsc, RwLock},
 };
 
 use super::config_visitor::AppConfigVisitor;
@@ -134,14 +133,12 @@ pub async fn open_or_create_file() -> ConfigFile {
 }
 
 pub async fn watcher(config: &'static LazyLock<RwLock<ConfigFile>>) {
-    // Capture the runtime handle so that we can spawn tasks from the synchronous callback.
     let runtime_handle = tokio::runtime::Handle::current();
     let (sender, mut receiver) = mpsc::channel(1);
 
     let mut watcher = RecommendedWatcher::new(
         move |result: Result<Event, Error>| {
             let sender_clone = sender.clone();
-            // Use the runtime handle to schedule the async task.
             runtime_handle.spawn(async move {
                 match result {
                     Ok(event) => {
@@ -239,7 +236,6 @@ mod tests {
 
         let config: AppConfig = serde_json::from_str(json_data).expect("Failed to deserialize");
 
-        // Clamping applied
         assert_eq!(config.cpu_threshold, 1.0); // min clamp
         assert_eq!(config.gpu_threshold, 100.0); // max clamp
         assert_eq!(config.ram_usage, 1.0); // min clamp

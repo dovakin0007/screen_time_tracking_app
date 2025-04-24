@@ -10,6 +10,7 @@
     "npm:@tailwindcss/vite@^4.0.13": "4.0.13_vite@6.2.0_lightningcss@1.29.2",
     "npm:@tauri-apps/api@2": "2.3.0",
     "npm:@tauri-apps/cli@2": "2.3.1",
+    "npm:@tauri-apps/plugin-autostart@2.3": "2.3.0",
     "npm:@tauri-apps/plugin-opener@2": "2.2.6",
     "npm:@tauri-apps/plugin-store@2.2": "2.2.0",
     "npm:@types/node@^22.14.1": "22.14.1",
@@ -730,6 +731,12 @@
         "@tauri-apps/cli-win32-x64-msvc"
       ]
     },
+    "@tauri-apps/plugin-autostart@2.3.0": {
+      "integrity": "sha512-yxQTpc4NolT1r317yjKVhrG+YwCWPBOj7p+70m/q0w1JHc53pGcHmTboAbA3kGY6PQ+9y9oE7cdmHq7PH9z/SQ==",
+      "dependencies": [
+        "@tauri-apps/api"
+      ]
+    },
     "@tauri-apps/plugin-opener@2.2.6": {
       "integrity": "sha512-bSdkuP71ZQRepPOn8BOEdBKYJQvl6+jb160QtJX/i2H9BF6ZySY/kYljh76N2Ne5fJMQRge7rlKoStYQY5Jq1w==",
       "dependencies": [
@@ -1411,6 +1418,7 @@
         "npm:@tailwindcss/vite@^4.0.13",
         "npm:@tauri-apps/api@2",
         "npm:@tauri-apps/cli@2",
+        "npm:@tauri-apps/plugin-autostart@2.3",
         "npm:@tauri-apps/plugin-opener@2",
         "npm:@tauri-apps/plugin-store@2.2",
         "npm:@types/node@^22.14.1",

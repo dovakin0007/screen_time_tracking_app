@@ -1,22 +1,29 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, LazyLock},
+    task::Poll,
+    time::{Duration, Instant},
+};
 
-use std::sync::{Arc, LazyLock};
-use std::task::Poll;
-use std::time::{Duration, Instant};
-
-use crate::db::{connection::DbHandler, models::ClassificationSerde};
-use crate::fs_watcher::config_watcher::ConfigFile;
-use crate::platform::windows::WindowsHandle;
-use crate::platform::Platform;
-use crate::system_usage::Machine;
 use anyhow::{Ok, Result};
 use futures::Future;
 use log::{debug, error};
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::{Mutex, RwLock};
+use tokio::{
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Mutex, RwLock,
+    },
+    task,
+    time::sleep,
+};
 
-use tokio::task;
-use tokio::time::sleep;
+use crate::{
+    db::{connection::DbHandler, models::ClassificationSerde},
+    fs_watcher::config_watcher::ConfigFile,
+    platform::{windows::WindowsHandle, Platform},
+    system_usage::Machine,
+};
+
 pub struct Publisher {
     pub context: Mutex<zmq::Socket>,
     pub queue: Mutex<VecDeque<ClassificationSerde>>,

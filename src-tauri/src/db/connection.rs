@@ -1,22 +1,22 @@
-use chrono::{Local, NaiveDate};
-use internment::ArcIntern;
-use log::{debug, error};
-use rusqlite::{params, Connection, Result as SqliteResult};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+use chrono::{Local, NaiveDate};
+use internment::ArcIntern;
+use log::{debug, error};
+use rusqlite::{params, Connection, Result as SqliteResult};
 use tokio::{
     sync::{mpsc, Mutex},
     time::Instant,
 };
 
-use crate::fs_watcher::start_menu_watcher::ShellLinkInfo;
-
 use super::models::{
     App, AppUsage, AppUsageQuery, ClassificationSerde, IdlePeriod, Sessions, WindowUsage,
 };
+use crate::fs_watcher::start_menu_watcher::ShellLinkInfo;
 
 const APP_UPSERT_QUERY: &str = r#"
     INSERT INTO apps (name, path)

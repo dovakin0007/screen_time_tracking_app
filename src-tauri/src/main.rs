@@ -11,30 +11,31 @@ use std::{
 use dotenvy::dotenv;
 use internment::ArcIntern;
 use log::{debug, error, info};
-use screen_time_tracking_front_end_lib::fs_watcher::config_watcher::{
-    open_or_create_file, watcher, ConfigFile,
-};
-use screen_time_tracking_front_end_lib::tracker::{AppData, AppTracker};
-use screen_time_tracking_front_end_lib::{
-    config::Config, fs_watcher::start_menu_watcher::start_menu_watcher,
-};
-use screen_time_tracking_front_end_lib::{
-    logger::Logger, platform::windows::spawn_toast_notification,
-};
 use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 use tokio::{
     sync::{mpsc, RwLock},
     task,
 };
 
-use screen_time_tracking_front_end_lib::db::{
-    connection::{upsert_app_usage, DbHandler},
-    models::Sessions,
+use screen_time_tracking_front_end_lib::{
+    config::Config,
+    db::{
+        connection::{upsert_app_usage, DbHandler},
+        models::Sessions,
+    },
+    fs_watcher::{
+        config_watcher::{open_or_create_file, watcher, ConfigFile},
+        start_menu_watcher::start_menu_watcher,
+    },
+    logger::Logger,
+    platform::{
+        windows::{spawn_toast_notification, WindowsHandle},
+        Platform, WindowDetails,
+    },
+    tracker::{AppData, AppTracker},
+    zero_mq_service::start_server,
 };
-use screen_time_tracking_front_end_lib::platform::{
-    windows::WindowsHandle, Platform, WindowDetails,
-};
-use screen_time_tracking_front_end_lib::zero_mq_service::start_server;
+
 #[derive(Debug)]
 pub struct WindowStateTracker {
     previous_state: Option<BTreeMap<ArcIntern<String>, ArcIntern<WindowDetails>>>,
@@ -204,7 +205,7 @@ async fn main2(db_handler: Arc<DbHandler>, config: Config) {
                                 && (seconds % app_detail.alert_duration.unwrap_or(300) == 0)
                             {
                                 let exe_name_str = exe_name.to_str().unwrap().to_string();
-                                let v = spawn_toast_notification(
+                                _ = spawn_toast_notification(
                                     exe_name_str,
                                     Arc::clone(&app_task_db_handler),
                                 )

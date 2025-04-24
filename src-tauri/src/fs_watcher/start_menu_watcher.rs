@@ -17,8 +17,8 @@ use notify::{Config, PollWatcher, RecursiveMode, Watcher};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-
 use walkdir::WalkDir;
+
 use windows::{
     core::{Interface, HSTRING, PCWSTR},
     Win32::{
@@ -83,6 +83,10 @@ impl Into<Option<String>> for LinkType {
         }
     }
 }
+
+// https://stackoverflow.com/questions/78190248/extract-icons-from-exe-in-rust
+
+//https://github.com/TeamDman/Cursor-Hero/blob/51611380997d74f74f76fa776be4892a9906c005/crates/winutils/src/win_icons.rs
 pub fn get_image_from_exe(executable_path: &str) -> anyhow::Result<Option<RgbaImage>> {
     unsafe {
         let hstr = HSTRING::from(executable_path);
@@ -157,10 +161,10 @@ pub fn convert_hicon_to_rgba_image(hicon: &HICON) -> anyhow::Result<RgbaImage> {
         }
         // Clean up
         SelectObject(hdc_mem, hbm_old);
-        DeleteDC(hdc_mem);
-        DeleteDC(hdc_screen);
-        DeleteObject(icon_info.hbmColor);
-        DeleteObject(icon_info.hbmMask);
+        _ = DeleteDC(hdc_mem);
+        _ = DeleteDC(hdc_screen);
+        _ = DeleteObject(icon_info.hbmColor);
+        _ = DeleteObject(icon_info.hbmMask);
 
         bgra_to_rgba(buffer.as_mut_slice());
 
@@ -170,6 +174,7 @@ pub fn convert_hicon_to_rgba_image(hicon: &HICON) -> anyhow::Result<RgbaImage> {
     }
 }
 
+//https://github.com/TeamDman/Cursor-Hero/blob/51611380997d74f74f76fa776be4892a9906c005/crates/math/src/shuffle.rs
 #[cfg(target_arch = "x86")]
 use std::arch::x86::_mm_shuffle_epi8;
 use std::arch::x86_64::__m128i;
@@ -192,7 +197,6 @@ pub fn bgra_to_rgba(data: &mut [u8]) {
             14, 13, 12, 15, // Fourth pixel
         )
     };
-    // For each 16-byte chunk in your data
     for chunk in data.chunks_exact_mut(16) {
         let mut vector = unsafe { _mm_loadu_si128(chunk.as_ptr() as *const __m128i) };
         vector = unsafe { _mm_shuffle_epi8(vector, mask) };

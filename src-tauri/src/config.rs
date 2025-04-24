@@ -1,5 +1,6 @@
-use dirs;
 use std::path::{Path, PathBuf};
+
+use dirs;
 use uuid::Uuid;
 
 use crate::tracker;
