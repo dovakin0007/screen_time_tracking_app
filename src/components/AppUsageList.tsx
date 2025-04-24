@@ -184,19 +184,18 @@ function AppUsageInfo(props: IAppUsageInfo) {
     >
       <CardHeader
         avatar={
-            <Avatar
-              sx={{
-                bgcolor: getAppIconColor(props.appName),
-                width: 40,
-                height: 40,
-                fontSize: "1rem",
-                fontWeight: "medium",
-              }}
-              aria-label={`${props.appName} icon`}
-            >
-              {props.appName.substring(0, 1).toUpperCase()}
-            </Avatar>
-
+          <Avatar
+            sx={{
+              bgcolor: getAppIconColor(props.appName),
+              width: 40,
+              height: 40,
+              fontSize: "1rem",
+              fontWeight: "medium",
+            }}
+            aria-label={`${props.appName} icon`}
+          >
+            {props.appName.substring(0, 1).toUpperCase()}
+          </Avatar>
         }
         action={
           <Box sx={{ display: "flex", alignItems: "center" }}>

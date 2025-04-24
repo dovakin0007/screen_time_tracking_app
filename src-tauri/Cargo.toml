@@ -77,6 +77,9 @@ incremental = true # Compile your binary in smaller steps.
 [profile.release]
 codegen-units = 1 # Allows LLVM to perform better optimization.
 opt-level = "s" # Prioritizes small binary size. Use `3` if you prefer speed.
+strip = true # Remove debug symbols
+panic = "abort" # Strip expensive panic clean-up logic
+lto = true # Enables link to optimization
 
 
 

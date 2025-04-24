@@ -75,37 +75,48 @@ const AppLauncherCard: React.FC<Props> = ({
       </ListItem>
 
       <Collapse in={expanded} timeout="auto" unmountOnExit>
-  <Box sx={{ pl: 9, pr: 2, pb: 2 }}>
-    {app.description && (
-      <Typography variant="body2" sx={{ mb: 1 }} color="text.primary">
-        {app.description}
-      </Typography>
-    )}
-    <Typography variant="body2" sx={{ mb: 1, wordBreak: "break-all" }} color="text.secondary">
-      {app.link}
-    </Typography>
-    {typeof launchCount === "number" && (
-      <Typography variant="caption" display="block" color="text.secondary">
-        Launches: {launchCount}
-      </Typography>
-    )}
-    {lastLaunched && (
-      <Typography variant="caption" display="block" color="text.secondary">
-        Last Launched: {new Date(lastLaunched).toLocaleString()}
-      </Typography>
-    )}
-    <Button
-      variant="contained"
-      size="small"
-      startIcon={<Launch />}
-      onClick={() => onLaunch(app.link)}
-      sx={{ mt: 1 }}
-    >
-      Launch
-    </Button>
-  </Box>
-</Collapse>
-
+        <Box sx={{ pl: 9, pr: 2, pb: 2 }}>
+          {app.description && (
+            <Typography variant="body2" sx={{ mb: 1 }} color="text.primary">
+              {app.description}
+            </Typography>
+          )}
+          <Typography
+            variant="body2"
+            sx={{ mb: 1, wordBreak: "break-all" }}
+            color="text.secondary"
+          >
+            {app.link}
+          </Typography>
+          {typeof launchCount === "number" && (
+            <Typography
+              variant="caption"
+              display="block"
+              color="text.secondary"
+            >
+              Launches: {launchCount}
+            </Typography>
+          )}
+          {lastLaunched && (
+            <Typography
+              variant="caption"
+              display="block"
+              color="text.secondary"
+            >
+              Last Launched: {new Date(lastLaunched).toLocaleString()}
+            </Typography>
+          )}
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<Launch />}
+            onClick={() => onLaunch(app.link)}
+            sx={{ mt: 1 }}
+          >
+            Launch
+          </Button>
+        </Box>
+      </Collapse>
     </>
   );
 };

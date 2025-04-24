@@ -290,7 +290,7 @@ pub fn get_icon_base64_from_icon_base64_image(
     Ok(None)
 }
 
-fn resolve_shortcut<T: AsRef<Path>>(shortcut_path: T) -> Option<ShellLinkInfo> {
+async fn resolve_shortcut<T: AsRef<Path>>(shortcut_path: T) -> Option<ShellLinkInfo> {
     unsafe {
         let _ = CoInitialize(None);
         OleInitialize(None).ok()?;
@@ -373,6 +373,7 @@ fn resolve_shortcut<T: AsRef<Path>>(shortcut_path: T) -> Option<ShellLinkInfo> {
             description,
         })
     }
+    
 }
 
 fn extract_wide_string(buffer: &[u16]) -> String {
@@ -506,7 +507,7 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
                             let db_handler_menu = Arc::clone(&db_handler_menu);
                             let path_clone = path.clone();
                             tokio::task::spawn(async move {
-                                if let Some(target) = resolve_shortcut(&path_clone) {
+                                if let Some(target) = resolve_shortcut(&path_clone).await {
                                     if let Err(e) =
                                         db_handler_menu.insert_menu_shell_links(target).await
                                     {
@@ -574,7 +575,7 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
                             let db_handler_menu = Arc::clone(&db_handler_menu);
                             let path_clone = path.clone();
                             tokio::task::spawn(async move {
-                                if let Some(target) = resolve_shortcut(&path_clone) {
+                                if let Some(target) = resolve_shortcut(&path_clone).await {
                                     if let Err(e) =
                                         db_handler_menu.insert_menu_shell_links(target).await
                                     {
@@ -611,7 +612,7 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
             if menu_paths.contains(&path) {
                 continue;
             } else {
-                let info = resolve_shortcut(&path);
+                let info = resolve_shortcut(&path).await;
                 if let Some(v) = info {
                     if let Err(e) = db_handler.insert_menu_shell_links(v).await {
                         error!("unable to insert / update the shell link info: {:?}", e);

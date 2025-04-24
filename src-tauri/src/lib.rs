@@ -115,6 +115,7 @@ async fn set_daily_limit(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(db_handler: Arc<DbHandler>) {
     tauri::Builder::default()
+    .any_thread()
         .plugin(tauri_plugin_store::Builder::new().build())
         .any_thread()
         .setup(|app| {

@@ -78,16 +78,22 @@ function TabPanel({ children, value, index, ...other }: TabPanelProps) {
 function App() {
   const launcher_store = new LazyStore("app_launcher_store.json");
   const defaultDates = new DatePickerDates();
-  const [appUsageInfo, setAppUsageInfo] = useState<IAppUsageInfo[] | null>(null);
+  const [appUsageInfo, setAppUsageInfo] = useState<IAppUsageInfo[] | null>(
+    null,
+  );
   const [loading, setLoading] = useState<boolean>(false);
-  const [startDate, setStartDate] = useState<Dayjs>(dayjs(defaultDates.start_date));
+  const [startDate, setStartDate] = useState<Dayjs>(
+    dayjs(defaultDates.start_date),
+  );
   const [endDate, setEndDate] = useState<Dayjs>(dayjs(defaultDates.end_date));
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [tabIndex, setTabIndex] = useState<number>(0);
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [shellLinks, setShellLinks] = useState<ShellLinkInfo[]>([]);
-  const [launchDataMap, setLaunchDataMap] = useState<Record<string, { count: number; lastLaunched: string | null }>>({});
+  const [launchDataMap, setLaunchDataMap] = useState<
+    Record<string, { count: number; lastLaunched: string | null }>
+  >({});
   const [loadingShellLinks, setLoadingShellLinks] = useState(true);
   const [sortAscending, setSortAscending] = useState(true);
 
@@ -96,10 +102,15 @@ function App() {
       try {
         const links: ShellLinkInfo[] = await invoke("fetch_shell_links");
         setShellLinks(links);
-
-        const map: Record<string, { count: number; lastLaunched: string | null }> = {};
+        console.log(links);
+        const map: Record<
+          string,
+          { count: number; lastLaunched: string | null }
+        > = {};
         for (const link of links) {
-          const data = await launcher_store.get<{ count: number; lastLaunched: string }>(link.link);
+          const data = await launcher_store.get<
+            { count: number; lastLaunched: string }
+          >(link.link);
           map[link.link] = {
             count: data?.count || 0,
             lastLaunched: data?.lastLaunched || null,
@@ -112,7 +123,15 @@ function App() {
         setLoadingShellLinks(false);
       }
     }
+
+    // Call the loadLinks function initially and then every 1 second
     loadLinks();
+    const interval = setInterval(loadLinks, 1000);
+
+    // Cleanup interval on component unmount
+    return () => {
+      clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -142,11 +161,13 @@ function App() {
           appName: item.appName || item.app_name,
           totalHours: item.totalHours || item.total_hours || 0,
           idleHours: item.idleHours || item.idle_hours || 0,
-          activePercentage: item.activePercentage ?? item.active_percentage ?? 0,
+          activePercentage: item.activePercentage ?? item.active_percentage ??
+            0,
           timeLimit: item.timeLimit ?? item.time_limit ?? null,
           shouldAlert: item.shouldAlert ?? item.should_alert ?? null,
           shouldClose: item.shouldClose ?? item.should_close ?? null,
-          alertBeforeClose: item.alertBeforeClose ?? item.alert_before_close ?? null,
+          alertBeforeClose: item.alertBeforeClose ?? item.alert_before_close ??
+            null,
           alertDuration: item.alertDuration ?? item.alert_duration ?? null,
         }));
         setAppUsageInfo(mappedData);
@@ -176,7 +197,8 @@ function App() {
 
   const filteredApps = shellLinks
     .map((link) => {
-      const appName = link.link.split("\\").pop()?.replace(/\.lnk$/i, "") || "App";
+      const appName = link.link.split("\\").pop()?.replace(/\.lnk$/i, "") ||
+        "App";
       return {
         ...link,
         displayName: appName.toLowerCase(),
@@ -191,8 +213,25 @@ function App() {
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
-      <Box sx={{ py: 4, px: { xs: 1, sm: 2, md: 3 }, maxWidth: "lg", mx: "auto", background: "linear-gradient(to right, #e3f2fd, #fce4ec)", borderRadius: 4, boxShadow: 4, minHeight: "100vh" }}>
-        <Typography variant="h4" component="h1" gutterBottom align="center" color="primary">
+      <Box
+        sx={{
+          py: 4,
+          px: { xs: 1, sm: 2, md: 3 },
+          maxWidth: "lg",
+          mx: "auto",
+          background: "linear-gradient(to right, #e3f2fd, #fce4ec)",
+          borderRadius: 4,
+          boxShadow: 4,
+          minHeight: "100vh",
+        }}
+      >
+        <Typography
+          variant="h4"
+          component="h1"
+          gutterBottom
+          align="center"
+          color="primary"
+        >
           App Dashboard
         </Typography>
 
@@ -204,19 +243,41 @@ function App() {
         </Box>
 
         <TabPanel value={tabIndex} index={0}>
-          <Box sx={{ mb: 4, p: 3, borderRadius: "12px", background: "#ffffff", boxShadow: 3 }}>
+          <Box
+            sx={{
+              mb: 4,
+              p: 3,
+              borderRadius: "12px",
+              background: "#ffffff",
+              boxShadow: 3,
+            }}
+          >
             <Typography variant="h6" gutterBottom>Select Date Range</Typography>
             <Grid container spacing={3}>
-              <Grid size={{xs:12, sm:6}}>
-                <DatePicker label="Start Date" value={startDate} onChange={handleStartDateChange} format="YYYY-MM-DD" sx={{ width: "100%" }} />
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <DatePicker
+                  label="Start Date"
+                  value={startDate}
+                  onChange={handleStartDateChange}
+                  format="YYYY-MM-DD"
+                  sx={{ width: "100%" }}
+                />
               </Grid>
-              <Grid size={{xs:12, sm:6}}>
-                <DatePicker label="End Date" value={endDate} onChange={handleEndDateChange} format="YYYY-MM-DD" sx={{ width: "100%" }} />
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <DatePicker
+                  label="End Date"
+                  value={endDate}
+                  onChange={handleEndDateChange}
+                  format="YYYY-MM-DD"
+                  sx={{ width: "100%" }}
+                />
               </Grid>
             </Grid>
           </Box>
 
-          <Typography variant="h5" sx={{ mt: 4 }} color="secondary">Usage Details</Typography>
+          <Typography variant="h5" sx={{ mt: 4 }} color="secondary">
+            Usage Details
+          </Typography>
 
           {loading && (
             <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
@@ -231,9 +292,12 @@ function App() {
             </Box>
           )}
 
-          {!loading && !fetchError && (!appUsageInfo || appUsageInfo.length === 0) && (
+          {!loading && !fetchError &&
+            (!appUsageInfo || appUsageInfo.length === 0) && (
             <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
-              <Typography>No app usage data found for the selected date range.</Typography>
+              <Typography>
+                No app usage data found for the selected date range.
+              </Typography>
             </Box>
           )}
 
@@ -241,7 +305,19 @@ function App() {
             <Grid container spacing={3} direction="column">
               {appUsageInfo.map((val, idx) => (
                 <Grid key={idx}>
-                  <Paper elevation={3} sx={{ p: 2, borderRadius: 4, transition: "all 0.3s", "&:hover": { transform: "scale(1.02)", boxShadow: 6, backgroundColor: "#f3f4f6" } }}>
+                  <Paper
+                    elevation={3}
+                    sx={{
+                      p: 2,
+                      borderRadius: 4,
+                      transition: "all 0.3s",
+                      "&:hover": {
+                        transform: "scale(1.02)",
+                        boxShadow: 6,
+                        backgroundColor: "#f3f4f6",
+                      },
+                    }}
+                  >
                     <AppUsageCard {...val} />
                   </Paper>
                 </Grid>
@@ -252,50 +328,71 @@ function App() {
 
         <TabPanel value={tabIndex} index={1}>
           <Typography variant="h6" gutterBottom>App Launcher</Typography>
-          <TextField fullWidth label="Search apps" variant="outlined" value={search} onChange={(e) => setSearch(e.target.value)} sx={{ my: 2 }} />
+          <TextField
+            fullWidth
+            label="Search apps"
+            variant="outlined"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{ my: 2 }}
+          />
           <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 2 }}>
-            <Button variant="contained" onClick={() => setSortAscending((prev) => !prev)}>Sort: {sortAscending ? "Ascending" : "Descending"}</Button>
+            <Button
+              variant="contained"
+              onClick={() => setSortAscending((prev) => !prev)}
+            >
+              Sort: {sortAscending ? "Ascending" : "Descending"}
+            </Button>
           </Box>
 
-          {loadingShellLinks ? (
-            <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
-              <CircularProgress />
-            </Box>
-          ) : (
-            <Paper variant="outlined">
-              <List>
-                {filteredApps.map((app, idx) => {
-                  const launchInfo = launchDataMap[app.link] || { count: 0, lastLaunched: null };
+          {loadingShellLinks
+            ? (
+              <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
+                <CircularProgress />
+              </Box>
+            )
+            : (
+              <Paper variant="outlined">
+                <List>
+                  {filteredApps.map((app, idx) => {
+                    const launchInfo = launchDataMap[app.link] ||
+                      { count: 0, lastLaunched: null };
 
-                  return (
-                    <AppLauncherCard
-                      key={idx}
-                      app={app}
-                      expanded={expandedId === idx}
-                      onToggle={() => setExpandedId(expandedId === idx ? null : idx)}
-                      launchCount={launchInfo.count}
-                      lastLaunched={launchInfo.lastLaunched}
-                      onLaunch={async () => {
-                        try {
-                          await invoke("start_app", { link: app.link });
-                          const current = await launcher_store.get<{ count: number; lastLaunched: string }>(app.link);
-                          const newData = {
-                            count: (current?.count || 0) + 1,
-                            lastLaunched: new Date().toISOString(),
-                          };
-                          await launcher_store.set(app.link, newData);
-                          await launcher_store.save();
-                          setLaunchDataMap((prev) => ({ ...prev, [app.link]: newData }));
-                        } catch (error) {
-                          console.error("Failed to launch app:", error);
-                        }
-                      }}
-                    />
-                  );
-                })}
-              </List>
-            </Paper>
-          )}
+                    return (
+                      <AppLauncherCard
+                        key={idx}
+                        app={app}
+                        expanded={expandedId === idx}
+                        onToggle={() =>
+                          setExpandedId(expandedId === idx ? null : idx)}
+                        launchCount={launchInfo.count}
+                        lastLaunched={launchInfo.lastLaunched}
+                        onLaunch={async () => {
+                          try {
+                            await invoke("start_app", { link: app.link });
+                            const current = await launcher_store.get<
+                              { count: number; lastLaunched: string }
+                            >(app.link);
+                            const newData = {
+                              count: (current?.count || 0) + 1,
+                              lastLaunched: new Date().toISOString(),
+                            };
+                            await launcher_store.set(app.link, newData);
+                            await launcher_store.save();
+                            setLaunchDataMap((prev) => ({
+                              ...prev,
+                              [app.link]: newData,
+                            }));
+                          } catch (error) {
+                            console.error("Failed to launch app:", error);
+                          }
+                        }}
+                      />
+                    );
+                  })}
+                </List>
+              </Paper>
+            )}
         </TabPanel>
       </Box>
     </LocalizationProvider>

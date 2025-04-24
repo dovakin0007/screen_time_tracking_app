@@ -289,12 +289,18 @@ async fn main() {
     let db_handler_clone = Arc::clone(&db_handler);
 
     let backend_runtime = tokio::runtime::Runtime::new().expect("Failed to create backend runtime");
-    std::thread::spawn(move || {
+    let t1 = std::thread::spawn(move || {
         backend_runtime.block_on(async move { main2(db_handler_clone, config).await });
     });
 
     let tauri_runtime =
         tokio::runtime::Runtime::new().expect("Failed to create seperate runtime for tauri");
     tauri::async_runtime::set(tauri_runtime.handle().to_owned());
-    screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
+    let t2 = std::thread::spawn(move || {
+        screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
+    });
+
+    t1.join();
+    t2.join();
+    // screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
 }
