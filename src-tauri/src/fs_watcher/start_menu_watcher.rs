@@ -508,19 +508,17 @@ pub async fn start_menu_watcher(
                     {
                         let db_handler_menu = Arc::clone(&db_handler_menu);
                         let path_clone = path.clone();
-                        tokio::spawn(async move {
-                            if let Some(target) = resolve_shortcut(&path_clone).await {
-                                if let Err(e) =
-                                    db_handler_menu.insert_menu_shell_links(target).await
-                                {
-                                    error!(
-                                        "Unable to insert / update the shell link info: {:?}",
-                                        e
-                                    );
+                        tokio::task::block_in_place(|| {
+                            let rt = tokio::runtime::Handle::current();
+                            rt.block_on(async {
+                                if let Some(target) = resolve_shortcut(&path_clone).await {
+                                    if let Err(e) = db_handler_menu.insert_menu_shell_links(target).await {
+                                        error!("Unable to insert / update the shell link info: {:?}", e);
+                                    }
+                                } else {
+                                    error!("Failed to resolve: {:?}", path_clone);
                                 }
-                            } else {
-                                error!("Failed to resolve: {:?}", path_clone);
-                            }
+                            });
                         });
                     }
                 }
@@ -579,19 +577,17 @@ pub async fn start_menu_watcher(
                         {
                             let db_handler_menu = Arc::clone(&db_handler_menu);
                             let path_clone = path.clone();
-                            tokio::spawn(async move {
-                                if let Some(target) = resolve_shortcut(&path_clone).await {
-                                    if let Err(e) =
-                                        db_handler_menu.insert_menu_shell_links(target).await
-                                    {
-                                        error!(
-                                            "Unable to insert / update the shell link info: {:?}",
-                                            e
-                                        );
+                            tokio::task::block_in_place(|| {
+                                let rt = tokio::runtime::Handle::current();
+                                rt.block_on(async {
+                                    if let Some(target) = resolve_shortcut(&path_clone).await {
+                                        if let Err(e) = db_handler_menu.insert_menu_shell_links(target).await {
+                                            error!("Unable to insert / update the shell link info: {:?}", e);
+                                        }
+                                    } else {
+                                        error!("Failed to resolve: {:?}", path_clone);
                                     }
-                                } else {
-                                    error!("Failed to resolve: {:?}", path_clone);
-                                }
+                                });
                             });
                         }
                     }

@@ -98,40 +98,33 @@ function App() {
   const [sortAscending, setSortAscending] = useState(true);
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      async function loadLinks() {
-        try {
-          const links: ShellLinkInfo[] = await invoke("fetch_shell_links");
-          setShellLinks(links);
-          console.log(links);
-          const map: Record<
-            string,
-            { count: number; lastLaunched: string | null }
-          > = {};
-          for (const link of links) {
-            const data = await launcher_store.get<{
-              count: number;
-              lastLaunched: string;
-            }>(link.link);
-            map[link.link] = {
-              count: data?.count || 0,
-              lastLaunched: data?.lastLaunched || null,
-            };
-          }
-          setLaunchDataMap(map);
-        } catch (e) {
-          console.error("Failed to load shell links:", e);
-        } finally {
-          setLoadingShellLinks(false);
+    async function loadLinks() {
+      try {
+        const links: ShellLinkInfo[] = await invoke("fetch_shell_links");
+        setShellLinks(links);
+        const map: Record<
+          string,
+          { count: number; lastLaunched: string | null }
+        > = {};
+        for (const link of links) {
+          const data = await launcher_store.get<{
+            count: number;
+            lastLaunched: string;
+          }>(link.link);
+          map[link.link] = {
+            count: data?.count || 0,
+            lastLaunched: data?.lastLaunched || null,
+          };
         }
+        setLaunchDataMap(map);
+      } catch (e) {
+        console.error("Failed to load shell links:", e);
+      } finally {
+        setLoadingShellLinks(false);
       }
+    }
 
-      loadLinks();
-    }, 10000); // 10 seconds
-
-    return () => {
-      clearTimeout(timeout);
-    };
+    loadLinks();
   }, []);
 
   useEffect(() => {

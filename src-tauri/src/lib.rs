@@ -66,7 +66,8 @@ async fn fetch_shell_links(
     state2: State<'_, Arc<StartMenuStatus>>,
 ) -> Result<Vec<ShellLinkInfo>, error::TuariError> {
     loop {
-        match dbg!(state2.get_atomic_bools()) {
+        println!("{:?}", state2.get_atomic_bools());
+        match state2.get_atomic_bools() {
             (true, true) => break,
             _ => tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await,
         }
@@ -161,7 +162,7 @@ pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStat
             app.handle()
                 .plugin(tauri_plugin_autostart::init(
                     MacosLauncher::LaunchAgent,
-                    Some(vec!["--flag1", "--flag2"]),
+                    Some(vec![]),
                 ))
                 .unwrap();
             let autostart_manager = app.autolaunch();
