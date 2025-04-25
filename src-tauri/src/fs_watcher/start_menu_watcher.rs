@@ -42,7 +42,7 @@ use windows::{
     },
 };
 
-use crate::db::connection::DbHandler;
+use crate::{db::connection::DbHandler, StartMenuStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellLinkInfo {
@@ -100,7 +100,6 @@ pub fn get_image_from_exe(executable_path: &str) -> anyhow::Result<Option<RgbaIm
 
         let image_result = convert_hicon_to_rgba_image(&hicon);
 
-        // Cleanup
         if let Err(e) = DestroyIcon(hicon) {
             eprintln!("Failed to destroy icon: {:?}", e);
         }
@@ -373,7 +372,6 @@ async fn resolve_shortcut<T: AsRef<Path>>(shortcut_path: T) -> Option<ShellLinkI
             description,
         })
     }
-    
 }
 
 fn extract_wide_string(buffer: &[u16]) -> String {
@@ -456,7 +454,10 @@ fn resolve_path(path: &str) -> String {
     expand_windows_env_vars(path)
 }
 
-pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
+pub async fn start_menu_watcher(
+    db_handler: Arc<DbHandler>,
+    programs_watcher_status: Arc<StartMenuStatus>,
+) {
     let runtime_handle = tokio::runtime::Handle::current();
     let start_menu_paths = get_start_menu_paths();
     sync_removed_shortcuts(Arc::clone(&db_handler), &start_menu_paths).await;
@@ -464,6 +465,8 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
     let common_menu_path = start_menu_paths[1].clone();
     let (tx, mut rx) = mpsc::channel(1);
     let db_handler_menu = Arc::clone(&db_handler);
+    let programs_watcher_status_user = Arc::clone(&programs_watcher_status);
+
     let mut user_menu_watcher = PollWatcher::with_initial_scan(
         {
             let user_menu_path = user_menu_path.clone();
@@ -484,52 +487,53 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
             }
         },
         Config::default().with_poll_interval(Duration::from_secs(1)),
-        {
-            move |result: std::result::Result<std::path::PathBuf, notify::Error>| match result {
-                Ok(p) => {
-                    let db_handler_menu = Arc::clone(&db_handler_menu);
-                    let paths: Vec<_> = if p.is_dir() {
-                        WalkDir::new(&p)
-                            .into_iter()
-                            .filter_map(Result::ok)
-                            .map(|entry| entry.path().to_path_buf())
-                            .collect()
-                    } else {
-                        vec![p]
-                    };
+        move |result: std::result::Result<std::path::PathBuf, notify::Error>| {
+            if let Ok(p) = result {
+                let db_handler_menu = Arc::clone(&db_handler_menu);
+                let paths: Vec<_> = if p.is_dir() {
+                    WalkDir::new(&p)
+                        .into_iter()
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path().to_path_buf())
+                        .collect()
+                } else {
+                    vec![p]
+                };
 
-                    for path in paths {
-                        if path.is_file()
-                            && path
-                                .extension()
-                                .map_or(false, |ext| ext == "lnk" || ext == "url")
-                        {
-                            let db_handler_menu = Arc::clone(&db_handler_menu);
-                            let path_clone = path.clone();
-                            tokio::task::spawn(async move {
-                                if let Some(target) = resolve_shortcut(&path_clone).await {
-                                    if let Err(e) =
-                                        db_handler_menu.insert_menu_shell_links(target).await
-                                    {
-                                        error!(
-                                            "unable to insert / update the shell link info: {:?}",
-                                            e
-                                        );
-                                    };
-                                } else {
-                                    error!("Failed to resolve: {:?}", path_clone);
+                for path in paths {
+                    if path.is_file()
+                        && path
+                            .extension()
+                            .map_or(false, |ext| ext == "lnk" || ext == "url")
+                    {
+                        let db_handler_menu = Arc::clone(&db_handler_menu);
+                        let path_clone = path.clone();
+                        tokio::spawn(async move {
+                            if let Some(target) = resolve_shortcut(&path_clone).await {
+                                if let Err(e) =
+                                    db_handler_menu.insert_menu_shell_links(target).await
+                                {
+                                    error!(
+                                        "Unable to insert / update the shell link info: {:?}",
+                                        e
+                                    );
                                 }
-                            });
-                        }
+                            } else {
+                                error!("Failed to resolve: {:?}", path_clone);
+                            }
+                        });
                     }
                 }
-                Err(e) => error!("Initial listing shortcuts error: {}", e),
+            } else if let Err(e) = result {
+                error!("Initial listing shortcuts error: {}", e);
             }
+            programs_watcher_status_user.set_atomic_bool_one(true);
         },
     )
     .unwrap();
     let db_handler_menu = Arc::clone(&db_handler);
     let runtime_handle = tokio::runtime::Handle::current();
+    let programs_watcher_status_common = Arc::clone(&programs_watcher_status);
     let mut common_menu_watcher = PollWatcher::with_initial_scan(
         {
             let common_menu_path = common_menu_path.clone();
@@ -553,8 +557,8 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
             }
         },
         Config::default().with_poll_interval(Duration::from_secs(1)),
-        {
-            move |result: std::result::Result<std::path::PathBuf, notify::Error>| match result {
+        move |result: std::result::Result<std::path::PathBuf, notify::Error>| {
+            match result {
                 Ok(p) => {
                     let db_handler_menu = Arc::clone(&db_handler_menu);
                     let paths: Vec<_> = if p.is_dir() {
@@ -566,6 +570,7 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
                     } else {
                         vec![p]
                     };
+
                     for path in paths {
                         if path.is_file()
                             && path
@@ -574,16 +579,16 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
                         {
                             let db_handler_menu = Arc::clone(&db_handler_menu);
                             let path_clone = path.clone();
-                            tokio::task::spawn(async move {
+                            tokio::spawn(async move {
                                 if let Some(target) = resolve_shortcut(&path_clone).await {
                                     if let Err(e) =
                                         db_handler_menu.insert_menu_shell_links(target).await
                                     {
                                         error!(
-                                            "unable to insert / update the shell link info: {:?}",
+                                            "Unable to insert / update the shell link info: {:?}",
                                             e
                                         );
-                                    };
+                                    }
                                 } else {
                                     error!("Failed to resolve: {:?}", path_clone);
                                 }
@@ -591,8 +596,11 @@ pub async fn start_menu_watcher(db_handler: Arc<DbHandler>) {
                         }
                     }
                 }
-                Err(e) => error!("Initial listing shortcuts error: {}", e),
+                Err(e) => {
+                    error!("Initial listing shortcuts error: {}", e);
+                }
             }
+            programs_watcher_status_common.set_atomic_bool_two(true);
         },
     )
     .unwrap();

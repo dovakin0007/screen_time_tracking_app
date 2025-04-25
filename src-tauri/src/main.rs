@@ -34,6 +34,7 @@ use screen_time_tracking_front_end_lib::{
     },
     tracker::{AppData, AppTracker},
     zero_mq_service::start_server,
+    StartMenuStatus,
 };
 
 #[derive(Debug)]
@@ -136,7 +137,11 @@ async fn track_application_usage(
 static APP_CONFIG: LazyLock<RwLock<ConfigFile>> =
     LazyLock::new(|| RwLock::new(ConfigFile::default()));
 
-async fn main2(db_handler: Arc<DbHandler>, config: Config) {
+async fn main2(
+    db_handler: Arc<DbHandler>,
+    config: Config,
+    programs_watcher_status: Arc<StartMenuStatus>,
+) {
     let db_handler_2 = Arc::clone(&db_handler);
     let file_notifier_task = task::spawn(async move {
         let _ = std::mem::replace(
@@ -145,7 +150,10 @@ async fn main2(db_handler: Arc<DbHandler>, config: Config) {
         );
         let db_handler = Arc::clone(&db_handler_2);
         let file_watcher = tokio::task::spawn(watcher(&APP_CONFIG));
-        let menu_watcher = task::spawn(start_menu_watcher(Arc::clone(&db_handler)));
+        let menu_watcher = task::spawn(start_menu_watcher(
+            Arc::clone(&db_handler),
+            programs_watcher_status,
+        ));
         let (join1, join2) = tokio::join!(file_watcher, menu_watcher);
         if let Err(e) = join1 {
             error!("{:?}", e);
@@ -276,7 +284,6 @@ async fn tracker_service_main(db_handler: Arc<DbHandler>, config: Config) -> any
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    // Check operating system
     if !cfg!(target_os = "windows") {
         error!("This application is supported only on Windows.");
         return;
@@ -287,20 +294,18 @@ async fn main() {
 
     let db_handler = Arc::new(DbHandler::new(config.db_path.clone()));
     let db_handler_clone = Arc::clone(&db_handler);
-
+    let programs_watcher_status = Arc::new(StartMenuStatus::new());
     let backend_runtime = tokio::runtime::Runtime::new().expect("Failed to create backend runtime");
-    let t1 = std::thread::spawn(move || {
-        backend_runtime.block_on(async move { main2(db_handler_clone, config).await });
+    let program_watch_status_clone = Arc::clone(&programs_watcher_status);
+    std::thread::spawn(move || {
+        backend_runtime.block_on(async move {
+            main2(db_handler_clone, config, program_watch_status_clone).await
+        });
     });
 
     let tauri_runtime =
         tokio::runtime::Runtime::new().expect("Failed to create seperate runtime for tauri");
     tauri::async_runtime::set(tauri_runtime.handle().to_owned());
-    let t2 = std::thread::spawn(move || {
-        screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
-    });
 
-    t1.join();
-    t2.join();
-    // screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler));
+    screen_time_tracking_front_end_lib::run(Arc::clone(&db_handler), programs_watcher_status);
 }

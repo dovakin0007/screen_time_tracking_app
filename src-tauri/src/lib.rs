@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use chrono::NaiveDate;
 use tauri::{
@@ -24,6 +27,30 @@ pub mod system_usage;
 pub mod tracker;
 pub mod zero_mq_service;
 
+#[derive(Debug)]
+pub struct StartMenuStatus(AtomicBool, AtomicBool);
+
+impl StartMenuStatus {
+    pub fn new() -> Self {
+        Self(AtomicBool::new(false), AtomicBool::new(false))
+    }
+
+    pub fn set_atomic_bool_one(&self, val: bool) {
+        self.0.store(val, Ordering::Release);
+    }
+
+    pub fn set_atomic_bool_two(&self, val: bool) {
+        self.1.store(val, Ordering::Release);
+    }
+
+    pub fn get_atomic_bools(&self) -> (bool, bool) {
+        return (
+            self.0.load(Ordering::Acquire),
+            self.1.load(Ordering::Acquire),
+        );
+    }
+}
+
 #[tauri::command]
 async fn fetch_app_usage_info(
     start_date: NaiveDate,
@@ -36,7 +63,15 @@ async fn fetch_app_usage_info(
 #[tauri::command]
 async fn fetch_shell_links(
     state: State<'_, Arc<DbHandler>>,
+    state2: State<'_, Arc<StartMenuStatus>>,
 ) -> Result<Vec<ShellLinkInfo>, error::TuariError> {
+    loop {
+        match dbg!(state2.get_atomic_bools()) {
+            (true, true) => break,
+            _ => tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await,
+        }
+    }
+
     Ok(state.get_all_shell_links().await?)
 }
 
@@ -113,9 +148,9 @@ async fn set_daily_limit(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(db_handler: Arc<DbHandler>) {
+pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStatus>) {
     tauri::Builder::default()
-    .any_thread()
+        .any_thread()
         .plugin(tauri_plugin_store::Builder::new().build())
         .any_thread()
         .setup(|app| {
@@ -171,7 +206,8 @@ pub fn run(db_handler: Arc<DbHandler>) {
 
             Ok(())
         })
-        .manage(Arc::clone(&db_handler))
+        .manage(db_handler)
+        .manage(program_watcher_status)
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             fetch_app_usage_info,
