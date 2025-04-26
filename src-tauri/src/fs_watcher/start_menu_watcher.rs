@@ -289,7 +289,7 @@ pub fn get_icon_base64_from_icon_base64_image(
     Ok(None)
 }
 
-async fn resolve_shortcut<T: AsRef<Path>>(shortcut_path: T) -> Option<ShellLinkInfo> {
+fn resolve_shortcut<T: AsRef<Path>>(shortcut_path: T) -> Option<ShellLinkInfo> {
     unsafe {
         let _ = CoInitialize(None);
         OleInitialize(None).ok()?;
@@ -458,145 +458,152 @@ pub async fn start_menu_watcher(
     db_handler: Arc<DbHandler>,
     programs_watcher_status: Arc<StartMenuStatus>,
 ) {
-    let runtime_handle = tokio::runtime::Handle::current();
     let start_menu_paths = get_start_menu_paths();
     sync_removed_shortcuts(Arc::clone(&db_handler), &start_menu_paths).await;
+
     let user_menu_path = start_menu_paths[0].clone();
     let common_menu_path = start_menu_paths[1].clone();
     let (tx, mut rx) = mpsc::channel(1);
-    let db_handler_menu = Arc::clone(&db_handler);
-    let programs_watcher_status_user = Arc::clone(&programs_watcher_status);
 
+    let db_handler_user = Arc::clone(&db_handler);
+    let status_user = Arc::clone(&programs_watcher_status);
     let mut user_menu_watcher = PollWatcher::with_initial_scan(
         {
-            let user_menu_path = user_menu_path.clone();
             let tx = tx.clone();
+            let user_menu_path = user_menu_path.clone();
             move |result: Result<notify::Event, notify::Error>| {
-                let user_menu_path = user_menu_path.clone();
                 let tx = tx.clone();
-                runtime_handle.spawn(async move {
-                    match result {
-                        Ok(event) => {
-                            let _ = tx.send(event.clone()).await;
-                        }
-                        Err(e) => {
-                            error!("Error listening for events on {:?}: {}", user_menu_path, e)
-                        }
-                    }
-                });
+                if let Ok(event) = result {
+                    let _ = tokio::task::spawn(async move {
+                        let _ = tx.send(event).await;
+                    });
+                } else if let Err(e) = result {
+                    error!("Error listening for events on {:?}: {}", user_menu_path, e);
+                }
             }
         },
         Config::default().with_poll_interval(Duration::from_secs(1)),
-        move |result: std::result::Result<std::path::PathBuf, notify::Error>| {
+        move |result: Result<PathBuf, notify::Error>| {
             if let Ok(p) = result {
-                let db_handler_menu = Arc::clone(&db_handler_menu);
-                let paths: Vec<_> = if p.is_dir() {
+                let paths = if p.is_dir() {
                     WalkDir::new(&p)
                         .into_iter()
                         .filter_map(Result::ok)
-                        .map(|entry| entry.path().to_path_buf())
-                        .collect()
+                        .map(|e| e.path().to_path_buf())
+                        .collect::<Vec<_>>()
                 } else {
                     vec![p]
                 };
 
-                for path in paths {
-                    if path.is_file()
-                        && path
-                            .extension()
-                            .map_or(false, |ext| ext == "lnk" || ext == "url")
-                    {
-                        let db_handler_menu = Arc::clone(&db_handler_menu);
-                        let path_clone = path.clone();
-                        tokio::task::block_in_place(|| {
-                            let rt = tokio::runtime::Handle::current();
-                            rt.block_on(async {
-                                if let Some(target) = resolve_shortcut(&path_clone).await {
-                                    if let Err(e) = db_handler_menu.insert_menu_shell_links(target).await {
-                                        error!("Unable to insert / update the shell link info: {:?}", e);
-                                    }
-                                } else {
-                                    error!("Failed to resolve: {:?}", path_clone);
-                                }
-                            });
-                        });
-                    }
-                }
-            } else if let Err(e) = result {
-                error!("Initial listing shortcuts error: {}", e);
-            }
-            programs_watcher_status_user.set_atomic_bool_one(true);
-        },
-    )
-    .unwrap();
-    let db_handler_menu = Arc::clone(&db_handler);
-    let runtime_handle = tokio::runtime::Handle::current();
-    let programs_watcher_status_common = Arc::clone(&programs_watcher_status);
-    let mut common_menu_watcher = PollWatcher::with_initial_scan(
-        {
-            let common_menu_path = common_menu_path.clone();
-            let tx = tx.clone();
-            move |result: Result<notify::Event, notify::Error>| {
-                let common_menu_path = common_menu_path.clone();
-                let tx = tx.clone();
-                runtime_handle.spawn(async move {
-                    match result {
-                        Ok(event) => {
-                            let _ = tx.send(event).await;
-                        }
-                        Err(e) => {
-                            error!(
-                                "Error listening for events on {:?}: {}",
-                                common_menu_path, e
-                            )
-                        }
-                    }
-                });
-            }
-        },
-        Config::default().with_poll_interval(Duration::from_secs(1)),
-        move |result: std::result::Result<std::path::PathBuf, notify::Error>| {
-            match result {
-                Ok(p) => {
-                    let db_handler_menu = Arc::clone(&db_handler_menu);
-                    let paths: Vec<_> = if p.is_dir() {
-                        WalkDir::new(&p)
-                            .into_iter()
-                            .filter_map(Result::ok)
-                            .map(|entry| entry.path().to_path_buf())
-                            .collect()
-                    } else {
-                        vec![p]
-                    };
-
-                    for path in paths {
-                        if path.is_file()
+                let shell_link_infos = paths
+                    .into_iter()
+                    .filter(|path| {
+                        path.is_file()
                             && path
                                 .extension()
                                 .map_or(false, |ext| ext == "lnk" || ext == "url")
-                        {
-                            let db_handler_menu = Arc::clone(&db_handler_menu);
-                            let path_clone = path.clone();
-                            tokio::task::block_in_place(|| {
-                                let rt = tokio::runtime::Handle::current();
-                                rt.block_on(async {
-                                    if let Some(target) = resolve_shortcut(&path_clone).await {
-                                        if let Err(e) = db_handler_menu.insert_menu_shell_links(target).await {
-                                            error!("Unable to insert / update the shell link info: {:?}", e);
-                                        }
-                                    } else {
-                                        error!("Failed to resolve: {:?}", path_clone);
-                                    }
-                                });
-                            });
+                    })
+                    .filter_map(|path| {
+                        let resolved = resolve_shortcut(&path);
+                        if resolved.is_none() {
+                            error!("Failed to resolve: {:?}", path);
                         }
-                    }
+                        resolved
+                    })
+                    .collect::<Vec<_>>();
+                let status_user = Arc::clone(&status_user);
+                if !shell_link_infos.is_empty() {
+                    let db = Arc::clone(&db_handler_user);
+                    tokio::spawn(async move {
+                        let callback = {
+                            Arc::new(move |success: bool| {
+                                status_user.set_atomic_bool_one(success);
+                            }) as Arc<dyn Fn(bool) + Send + Sync>
+                        };
+                        if let Err(e) = db
+                            .insert_menu_shell_links(shell_link_infos, Some(callback))
+                            .await
+                        {
+                            error!("DB insert failed: {:?}", e);
+                        }
+                    });
                 }
-                Err(e) => {
-                    error!("Initial listing shortcuts error: {}", e);
+            } else if let Err(e) = result {
+                error!("Initial user menu listing error: {}", e);
+            }
+        },
+    )
+    .unwrap();
+
+    let db_handler_common = Arc::clone(&db_handler);
+    let status_common = Arc::clone(&programs_watcher_status);
+    let mut common_menu_watcher = PollWatcher::with_initial_scan(
+        {
+            let tx = tx.clone();
+            let common_menu_path = common_menu_path.clone();
+            move |result: Result<notify::Event, notify::Error>| {
+                let tx = tx.clone();
+                if let Ok(event) = result {
+                    let _ = tokio::task::spawn(async move {
+                        let _ = tx.send(event).await;
+                    });
+                } else if let Err(e) = result {
+                    error!(
+                        "Error listening for events on {:?}: {}",
+                        common_menu_path, e
+                    );
                 }
             }
-            programs_watcher_status_common.set_atomic_bool_two(true);
+        },
+        Config::default().with_poll_interval(Duration::from_secs(1)),
+        move |result: Result<PathBuf, notify::Error>| {
+            if let Ok(p) = result {
+                let paths = if p.is_dir() {
+                    WalkDir::new(&p)
+                        .into_iter()
+                        .filter_map(Result::ok)
+                        .map(|e| e.path().to_path_buf())
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![p]
+                };
+
+                let shell_link_infos = paths
+                    .into_iter()
+                    .filter(|path| {
+                        path.is_file()
+                            && path
+                                .extension()
+                                .map_or(false, |ext| ext == "lnk" || ext == "url")
+                    })
+                    .filter_map(|path| {
+                        let resolved = resolve_shortcut(&path);
+                        if resolved.is_none() {
+                            error!("Failed to resolve: {:?}", path);
+                        }
+                        resolved
+                    })
+                    .collect::<Vec<_>>();
+                let status_common = Arc::clone(&status_common);
+                if !shell_link_infos.is_empty() {
+                    let db = Arc::clone(&db_handler_common);
+                    tokio::spawn(async move {
+                        let callback = {
+                            Arc::new(move |success: bool| {
+                                status_common.set_atomic_bool_two(success);
+                            }) as Arc<dyn Fn(bool) + Send + Sync>
+                        };
+                        if let Err(e) = db
+                            .insert_menu_shell_links(shell_link_infos, Some(callback))
+                            .await
+                        {
+                            error!("DB insert failed: {:?}", e);
+                        }
+                    });
+                }
+            } else if let Err(e) = result {
+                error!("Initial common menu listing error: {}", e);
+            }
         },
     )
     .unwrap();
@@ -604,28 +611,221 @@ pub async fn start_menu_watcher(
     if let Err(e) = user_menu_watcher.watch(&user_menu_path, RecursiveMode::Recursive) {
         error!("Failed to watch {:?}: {:?}", user_menu_path, e);
     }
-
     if let Err(e) = common_menu_watcher.watch(&common_menu_path, RecursiveMode::Recursive) {
         error!("Failed to watch {:?}: {:?}", common_menu_path, e);
     }
+
     while let Some(event) = rx.recv().await {
-        let event_paths = event.paths;
         let menu_paths = get_start_menu_paths();
-        for path in event_paths {
-            let db_handler = Arc::clone(&db_handler);
-            if menu_paths.contains(&path) {
-                continue;
-            } else {
-                let info = resolve_shortcut(&path).await;
-                if let Some(v) = info {
-                    if let Err(e) = db_handler.insert_menu_shell_links(v).await {
-                        error!("unable to insert / update the shell link info: {:?}", e);
-                    };
+        let infos = event
+            .paths
+            .into_iter()
+            .filter(|p| !menu_paths.contains(p))
+            .filter_map(|path| {
+                let resolved = resolve_shortcut(&path);
+                if resolved.is_none() {
+                    error!("Failed to resolve: {:?}", path);
                 }
-            }
+                resolved
+            })
+            .collect::<Vec<_>>();
+
+        if !infos.is_empty() {
+            let db = Arc::clone(&db_handler);
+            tokio::spawn(async move {
+                if let Err(e) = db.insert_menu_shell_links(infos, None).await {
+                    error!("DB insert failed: {:?}", e);
+                }
+            });
         }
     }
 }
+
+// pub async fn start_menu_watcher(
+//     db_handler: Arc<DbHandler>,
+//     programs_watcher_status: Arc<StartMenuStatus>,
+// ) {
+//     let runtime_handle = tokio::runtime::Handle::current();
+//     let start_menu_paths = get_start_menu_paths();
+//     sync_removed_shortcuts(Arc::clone(&db_handler), &start_menu_paths).await;
+//     let user_menu_path = start_menu_paths[0].clone();
+//     let common_menu_path = start_menu_paths[1].clone();
+//     let (tx, mut rx) = mpsc::channel(1);
+//     let db_handler_menu = Arc::clone(&db_handler);
+//     let programs_watcher_status_user = Arc::clone(&programs_watcher_status);
+
+//     let mut user_menu_watcher = PollWatcher::with_initial_scan(
+//         {
+//             let user_menu_path = user_menu_path.clone();
+//             let tx = tx.clone();
+//             move |result: Result<notify::Event, notify::Error>| {
+//                 let user_menu_path = user_menu_path.clone();
+//                 let tx = tx.clone();
+//                 runtime_handle.spawn(async move {
+//                     match result {
+//                         Ok(event) => {
+//                             let _ = tx.send(event.clone()).await;
+//                         }
+//                         Err(e) => {
+//                             error!("Error listening for events on {:?}: {}", user_menu_path, e)
+//                         }
+//                     }
+//                 });
+//             }
+//         },
+//         Config::default().with_poll_interval(Duration::from_secs(1)),
+//         move |result: Result<PathBuf, notify::Error>| {
+//             let db = Arc::clone(&db_handler_menu);
+//             let status = Arc::clone(&programs_watcher_status_user); // pick the right one
+//             let runtime_handle = tokio::runtime::Handle::current();
+
+//             runtime_handle.spawn(async move {
+//                 match result {
+//                     Ok(p) => {
+//                         let paths: Vec<_> = if p.is_dir() {
+//                             WalkDir::new(&p)
+//                                 .into_iter()
+//                                 .filter_map(Result::ok)
+//                                 .map(|entry| entry.path().to_path_buf())
+//                                 .collect()
+//                         } else {
+//                             vec![p]
+//                         };
+
+//                         let futures = paths
+//                             .into_iter()
+//                             .filter(|path| {
+//                                 path.is_file()
+//                                     && path
+//                                         .extension()
+//                                         .map_or(false, |ext| ext == "lnk" || ext == "url")
+//                             })
+//                             .map(|path| {
+//                                 let db = Arc::clone(&db);
+//                                 async move {
+//                                     if let Some(target) = resolve_shortcut(&path).await {
+//                                         if let Err(e) = db.insert_menu_shell_links(target).await {
+//                                             error!("DB insert failed: {:?}", e);
+//                                         }
+//                                     } else {
+//                                         error!("Failed to resolve: {:?}", path);
+//                                     }
+//                                 }
+//                             });
+
+//                         futures::future::join_all(futures).await;
+//                         status.set_atomic_bool_one(true);
+//                     }
+//                     Err(e) => {
+//                         error!("Initial listing shortcuts error: {}", e);
+//                     }
+//                 }
+//             });
+//         },
+//     )
+//     .unwrap();
+//     let db_handler_menu = Arc::clone(&db_handler);
+//     let runtime_handle = tokio::runtime::Handle::current();
+//     let programs_watcher_status_common = Arc::clone(&programs_watcher_status);
+//     let mut common_menu_watcher = PollWatcher::with_initial_scan(
+//         {
+//             let common_menu_path = common_menu_path.clone();
+//             let tx = tx.clone();
+//             move |result: Result<notify::Event, notify::Error>| {
+//                 let common_menu_path = common_menu_path.clone();
+//                 let tx = tx.clone();
+//                 runtime_handle.spawn(async move {
+//                     match result {
+//                         Ok(event) => {
+//                             let _ = tx.send(event).await;
+//                         }
+//                         Err(e) => {
+//                             error!(
+//                                 "Error listening for events on {:?}: {}",
+//                                 common_menu_path, e
+//                             )
+//                         }
+//                     }
+//                 });
+//             }
+//         },
+//         Config::default().with_poll_interval(Duration::from_secs(1)),
+//         move |result: Result<PathBuf, notify::Error>| {
+//             let db = Arc::clone(&db_handler_menu);
+//             let status = Arc::clone(&programs_watcher_status_common); // pick the right one
+//             let runtime_handle = tokio::runtime::Handle::current();
+
+//             runtime_handle.spawn(async move {
+//                 match result {
+//                     Ok(p) => {
+//                         let paths: Vec<_> = if p.is_dir() {
+//                             WalkDir::new(&p)
+//                                 .into_iter()
+//                                 .filter_map(Result::ok)
+//                                 .map(|entry| entry.path().to_path_buf())
+//                                 .collect()
+//                         } else {
+//                             vec![p]
+//                         };
+
+//                         let futures = paths
+//                             .into_iter()
+//                             .filter(|path| {
+//                                 path.is_file()
+//                                     && path
+//                                         .extension()
+//                                         .map_or(false, |ext| ext == "lnk" || ext == "url")
+//                             })
+//                             .map(|path| {
+//                                 let db = Arc::clone(&db);
+//                                 async move {
+//                                     if let Some(target) = resolve_shortcut(&path).await {
+//                                         if let Err(e) = db.insert_menu_shell_links(target).await {
+//                                             error!("DB insert failed: {:?}", e);
+//                                         }
+//                                     } else {
+//                                         error!("Failed to resolve: {:?}", path);
+//                                     }
+//                                 }
+//                             });
+
+//                         futures::future::join_all(futures).await;
+//                         status.set_atomic_bool_two(true);
+//                     }
+//                     Err(e) => {
+//                         error!("Initial listing shortcuts error: {}", e);
+//                     }
+//                 }
+//             });
+//         },
+//     )
+//     .unwrap();
+
+//     if let Err(e) = user_menu_watcher.watch(&user_menu_path, RecursiveMode::Recursive) {
+//         error!("Failed to watch {:?}: {:?}", user_menu_path, e);
+//     }
+
+//     if let Err(e) = common_menu_watcher.watch(&common_menu_path, RecursiveMode::Recursive) {
+//         error!("Failed to watch {:?}: {:?}", common_menu_path, e);
+//     }
+//     while let Some(event) = rx.recv().await {
+//         let event_paths = event.paths;
+//         let menu_paths = get_start_menu_paths();
+//         for path in event_paths {
+//             let db_handler = Arc::clone(&db_handler);
+//             if menu_paths.contains(&path) {
+//                 continue;
+//             } else {
+//                 let info = resolve_shortcut(&path).await;
+//                 if let Some(v) = info {
+//                     if let Err(e) = db_handler.insert_menu_shell_links(v).await {
+//                         error!("unable to insert / update the shell link info: {:?}", e);
+//                     };
+//                 }
+//             }
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

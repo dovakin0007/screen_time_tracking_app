@@ -66,10 +66,9 @@ async fn fetch_shell_links(
     state2: State<'_, Arc<StartMenuStatus>>,
 ) -> Result<Vec<ShellLinkInfo>, error::TuariError> {
     loop {
-        println!("{:?}", state2.get_atomic_bools());
         match state2.get_atomic_bools() {
             (true, true) => break,
-            _ => tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await,
+            _ => tokio::time::sleep(tokio::time::Duration::from_millis(1)).await,
         }
     }
 

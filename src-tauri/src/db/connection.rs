@@ -371,10 +371,49 @@ impl DbHandler {
         }
     }
 
-    pub async fn insert_menu_shell_links(&self, apps: ShellLinkInfo) -> SqliteResult<()> {
-        let conn = self.conn.lock().await;
-        conn.execute(
-            r#"
+    // pub async fn insert_menu_shell_links(&self, apps: ShellLinkInfo) -> SqliteResult<()> {
+    //     let conn = self.conn.lock().await;
+    //     conn.execute(
+    //         r#"
+    //         INSERT INTO shell_link_info (
+    //             link,
+    //             target_path,
+    //             arguments,
+    //             icon_base64_image,
+    //             working_directory,
+    //             description
+    //         )
+    //         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+    //         ON CONFLICT(link) DO UPDATE SET
+    //             target_path = excluded.target_path,
+    //             arguments = excluded.arguments,
+    //             icon_base64_image = excluded.icon_base64_image,
+    //             working_directory = excluded.working_directory,
+    //             description = excluded.description
+    //         "#,
+    //         params![
+    //             apps.link,
+    //             apps.target_path,
+    //             apps.arguments,
+    //             apps.icon_base64_image,
+    //             apps.working_directory,
+    //             apps.description
+    //         ],
+    //     )?;
+    //     Ok(())
+    // }
+
+    pub async fn insert_menu_shell_links(
+        &self,
+        apps: Vec<ShellLinkInfo>,
+        callback: Option<Arc<dyn Fn(bool) + Send + Sync>>,
+    ) -> SqliteResult<()> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+
+        for app in apps {
+            tx.execute(
+                r#"
             INSERT INTO shell_link_info (
                 link,
                 target_path,
@@ -391,15 +430,21 @@ impl DbHandler {
                 working_directory = excluded.working_directory,
                 description = excluded.description
             "#,
-            params![
-                apps.link,
-                apps.target_path,
-                apps.arguments,
-                apps.icon_base64_image,
-                apps.working_directory,
-                apps.description
-            ],
-        )?;
+                params![
+                    app.link,
+                    app.target_path,
+                    app.arguments,
+                    app.icon_base64_image,
+                    app.working_directory,
+                    app.description
+                ],
+            )?;
+        }
+        tx.commit()?;
+
+        if let Some(cb) = callback {
+            cb(true);
+        }
         Ok(())
     }
 
