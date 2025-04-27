@@ -9,8 +9,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, State,
 };
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-
 use db::models::AppUsageQuery;
 use error::TuariError;
 use fs_watcher::start_menu_watcher::ShellLinkInfo;
@@ -148,8 +146,52 @@ async fn set_daily_limit(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(target_os = "windows")]
 pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStatus>) {
+    #[cfg(not(debug_assertions))]
+    {
+        use log::error;
+
+        if let Err(e) = std::env::current_exe() {
+            error!("Failed to get current executable path: {}", e);
+        } else {
+            let exe_name = std::env::current_exe().unwrap(); // Safe because of above check
+            let exe_path_str = match exe_name.as_path().to_str() {
+                Some(s) => s,
+                None => {
+                    error!("Failed to convert executable path to string.");
+                    return;
+                }
+            };
+
+            let auto = auto_launch::AutoLaunch::new(
+                "com.screen-time-tracker.app",
+                exe_path_str,
+                &[""],
+            );
+
+            if let Err(e) = auto.enable() {
+                error!("Failed to enable auto-launch: {}", e);
+            }
+
+            match auto.is_enabled() {
+                Ok(enabled) => {
+                    if !enabled {
+                        error!("Auto-launch is not enabled even after trying to enable it.");
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to check if auto-launch is enabled: {}", e);
+                }
+            }
+        }
+    }
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let _ = app.get_webview_window("main")
+                       .expect("no main window")
+                       .set_focus();
+        }))
         .any_thread()
         .plugin(tauri_plugin_store::Builder::new().build())
         .any_thread()
@@ -158,14 +200,6 @@ pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStat
             let quit = MenuItemBuilder::with_id("quit", "Quit Program").build(app)?;
             let hide = MenuItemBuilder::with_id("hide", "Close to tray").build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
-            app.handle()
-                .plugin(tauri_plugin_autostart::init(
-                    MacosLauncher::LaunchAgent,
-                    Some(vec![]),
-                ))
-                .unwrap();
-            let autostart_manager = app.autolaunch();
-            let _ = autostart_manager.enable();
             let menu = MenuBuilder::new(app)
                 .items(&[&quit, &hide, &show])
                 .build()?;
