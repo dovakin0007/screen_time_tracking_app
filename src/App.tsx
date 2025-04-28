@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { LazyStore } from "@tauri-apps/plugin-store";
 
-import AppUsageCard from "./components/AppUsageList";
-import AppLauncherCard from "./components/AppLauncherItem";
+import { AppUsageCard } from "./components/AppUsageInfo/AppUsageInfo";
+import AppLauncherCard from "./components/AppLauncher/AppLauncherCard";
 
 import Box from "@mui/material/Box";
 import Grid from "@mui/material/Grid";
@@ -23,6 +23,7 @@ import dayjs, { Dayjs } from "dayjs";
 
 export interface IAppUsageInfo {
   appName: string;
+  appPath: string;
   totalHours: number;
   idleHours: number;
   activePercentage: number;
@@ -152,6 +153,7 @@ function App() {
       if (Array.isArray(res)) {
         const mappedData: IAppUsageInfo[] = res.map((item: any) => ({
           appName: item.appName || item.app_name,
+          appPath: item.appPath || item.app_path,
           totalHours: item.totalHours || item.total_hours || 0,
           idleHours: item.idleHours || item.idle_hours || 0,
           activePercentage: item.activePercentage ?? item.active_percentage ??

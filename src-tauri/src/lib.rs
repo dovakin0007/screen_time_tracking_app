@@ -5,13 +5,11 @@ use std::sync::{
 
 use chrono::NaiveDate;
 use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State,
+    menu::{MenuBuilder, MenuItemBuilder}, tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}, AppHandle, Emitter, Manager, State
 };
 use db::models::AppUsageQuery;
 use error::TuariError;
-use fs_watcher::start_menu_watcher::ShellLinkInfo;
+use fs_watcher::start_menu_watcher::{ShellLinkInfo, get_icon_base64_from_exe};
 
 use crate::db::connection::DbHandler;
 
@@ -145,6 +143,19 @@ async fn set_daily_limit(
     }
 }
 
+#[tauri::command]
+async fn fetch_app_icon(app: AppHandle, path: &str) -> Result<Option<String>, TuariError> {
+    match get_icon_base64_from_exe(path) {
+        Ok(val) => {
+            return Ok(val)
+        }
+        Err(e) => {
+            app.emit("icon-fetch-error", (path, e.to_string())).unwrap();
+            Err(TuariError::IconError(e.to_string()))
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg(target_os = "windows")]
 pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStatus>) {
@@ -187,7 +198,7 @@ pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStat
         }
     }
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let _ = app.get_webview_window("main")
                        .expect("no main window")
                        .set_focus();
@@ -204,6 +215,7 @@ pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStat
                 .items(&[&quit, &hide, &show])
                 .build()?;
             TrayIconBuilder::new()
+            .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "quit" => {
@@ -248,6 +260,7 @@ pub fn run(db_handler: Arc<DbHandler>, program_watcher_status: Arc<StartMenuStat
             set_daily_limit,
             fetch_shell_links,
             start_app,
+            fetch_app_icon,
         ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {

@@ -64,6 +64,7 @@ pub struct AppUsage {
 #[serde(rename_all = "camelCase")]
 pub struct AppUsageQuery {
     pub app_name: String,
+    pub app_path: String,
     pub total_hours: f64,
     pub idle_hours: f64,
     pub active_percentage: Option<f64>,

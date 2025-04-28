@@ -8,6 +8,8 @@ pub enum TuariError {
     OptionError(String),
     #[error("unable to start app")]
     LaunchError(String),
+    #[error("Unable to fetch icon from exe")]
+    IconError(String),
 }
 
 impl serde::Serialize for TuariError {

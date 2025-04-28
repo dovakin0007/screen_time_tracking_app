@@ -85,6 +85,7 @@ const APP_USAGE_QUERY: &str = r#"
     )
     SELECT 
         t.app_name AS AppName,
+        a.path AS AppPath, -- <--- added this line
         ROUND(t.total_seconds / 3600.0, 2) AS TotalHours,
         ROUND(COALESCE(i.idle_seconds, 0) / 3600.0, 2) AS IdleHours,
         CASE 
@@ -100,8 +101,10 @@ const APP_USAGE_QUERY: &str = r#"
     FROM app_total t
     LEFT JOIN app_idle i ON t.app_name = i.app_name
     LEFT JOIN daily_limits dl ON t.app_name = dl.app_name
+    LEFT JOIN apps a ON t.app_name = a.name
     ORDER BY TotalHours DESC;
-    "#;
+"#;
+
 
 const APP_USAGE_QUERY_APP_NAME: &str = r#"
     WITH app_total AS (
@@ -132,6 +135,7 @@ const APP_USAGE_QUERY_APP_NAME: &str = r#"
     )
     SELECT 
         t.app_name AS AppName,
+        a.path AS AppPath, -- <-- added this
         ROUND(t.total_seconds / 3600.0, 2) AS TotalHours,
         ROUND(COALESCE(i.idle_seconds, 0) / 3600.0, 2) AS IdleHours,
         CASE 
@@ -147,6 +151,7 @@ const APP_USAGE_QUERY_APP_NAME: &str = r#"
     FROM app_total t
     LEFT JOIN app_idle i ON t.app_name = i.app_name
     LEFT JOIN daily_limits dl ON t.app_name = dl.app_name
+    LEFT JOIN apps a ON t.app_name = a.name -- <-- added this join
     ORDER BY TotalHours DESC;
 "#;
 
@@ -264,14 +269,15 @@ impl DbHandler {
             |row| {
                 Ok(AppUsageQuery {
                     app_name: row.get(0)?,
-                    total_hours: row.get(1)?,
-                    idle_hours: row.get(2)?,
-                    active_percentage: row.get(3).ok(),
-                    time_limit: row.get(4).ok(),
-                    should_alert: row.get(5).ok(),
-                    should_close: row.get(6).ok(),
-                    alert_before_close: row.get(7).ok(),
-                    alert_duration: row.get(8).ok(),
+                    app_path: row.get(1)?,
+                    total_hours: row.get(2)?,
+                    idle_hours: row.get(3)?,
+                    active_percentage: row.get(4).ok(),
+                    time_limit: row.get(5).ok(),
+                    should_alert: row.get(6).ok(),
+                    should_close: row.get(7).ok(),
+                    alert_before_close: row.get(8).ok(),
+                    alert_duration: row.get(9).ok(),
                 })
             },
         )?;
@@ -294,14 +300,15 @@ impl DbHandler {
             |row| {
                 Ok(AppUsageQuery {
                     app_name: row.get(0)?,
-                    total_hours: row.get(1)?,
-                    idle_hours: row.get(2)?,
-                    active_percentage: row.get(3).ok(),
-                    time_limit: row.get(4).ok(),
-                    should_alert: row.get(5).ok(),
-                    should_close: row.get(6).ok(),
-                    alert_before_close: row.get(7).ok(),
-                    alert_duration: row.get(8).ok(),
+                    app_path: row.get(1)?,
+                    total_hours: row.get(2)?,
+                    idle_hours: row.get(3)?,
+                    active_percentage: row.get(4).ok(),
+                    time_limit: row.get(5).ok(),
+                    should_alert: row.get(6).ok(),
+                    should_close: row.get(7).ok(),
+                    alert_before_close: row.get(8).ok(),
+                    alert_duration: row.get(9).ok(),
                 })
             },
         )?;
@@ -352,14 +359,15 @@ impl DbHandler {
             |row| {
                 Ok(AppUsageQuery {
                     app_name: row.get(0)?,
-                    total_hours: row.get(1)?,
-                    idle_hours: row.get(2)?,
-                    active_percentage: row.get(3).ok(),
-                    time_limit: row.get(4).ok(),
-                    should_alert: row.get(5).ok(),
-                    should_close: row.get(6).ok(),
-                    alert_before_close: row.get(7).ok(),
-                    alert_duration: row.get(8).ok(),
+                    app_path: row.get(1)?,
+                    total_hours: row.get(2)?,
+                    idle_hours: row.get(3)?,
+                    active_percentage: row.get(4).ok(),
+                    time_limit: row.get(5).ok(),
+                    should_alert: row.get(6).ok(),
+                    should_close: row.get(7).ok(),
+                    alert_before_close: row.get(8).ok(),
+                    alert_duration: row.get(9).ok(),
                 })
             },
         )?;

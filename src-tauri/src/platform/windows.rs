@@ -1,4 +1,3 @@
-// Standard library
 use std::{
     collections::BTreeMap,
     ffi::OsString,
@@ -8,14 +7,12 @@ use std::{
     time::Duration,
 };
 
-// External crates
 use anyhow::{Context, Result};
 use internment::ArcIntern;
 use log::{debug, error};
 use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
 
-// Windows APIs
 use windows::{
     core::{IInspectable, Interface, HSTRING},
     Data::Xml::Dom::XmlDocument,

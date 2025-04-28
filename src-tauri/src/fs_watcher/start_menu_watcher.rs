@@ -87,7 +87,7 @@ impl Into<Option<String>> for LinkType {
 // https://stackoverflow.com/questions/78190248/extract-icons-from-exe-in-rust
 
 //https://github.com/TeamDman/Cursor-Hero/blob/51611380997d74f74f76fa776be4892a9906c005/crates/winutils/src/win_icons.rs
-pub fn get_image_from_exe(executable_path: &str) -> anyhow::Result<Option<RgbaImage>> {
+fn get_image_from_exe(executable_path: &str) -> anyhow::Result<Option<RgbaImage>> {
     unsafe {
         let hstr = HSTRING::from(executable_path);
         let path_pcwstr = PCWSTR::from_raw(hstr.as_wide().as_ptr());
@@ -108,7 +108,7 @@ pub fn get_image_from_exe(executable_path: &str) -> anyhow::Result<Option<RgbaIm
     }
 }
 
-pub fn convert_hicon_to_rgba_image(hicon: &HICON) -> anyhow::Result<RgbaImage> {
+fn convert_hicon_to_rgba_image(hicon: &HICON) -> anyhow::Result<RgbaImage> {
     unsafe {
         let mut icon_info = ICONINFOEXW::default();
         icon_info.cbSize = std::mem::size_of::<ICONINFOEXW>() as u32;
@@ -186,7 +186,7 @@ use std::arch::x86_64::_mm_storeu_si128;
 /// Convert BGRA to RGBA
 ///
 /// Uses SIMD to go fast
-pub fn bgra_to_rgba(data: &mut [u8]) {
+fn bgra_to_rgba(data: &mut [u8]) {
     // The shuffle mask for converting BGRA -> RGBA
     let mask: __m128i = unsafe {
         _mm_setr_epi8(
