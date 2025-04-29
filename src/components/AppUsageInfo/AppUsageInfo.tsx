@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { IAppUsageInfo } from "../../App";
+import { IAppUsageInfo } from "../../pages/AppUsageTab";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Avatar,

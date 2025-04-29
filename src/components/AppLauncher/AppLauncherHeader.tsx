@@ -33,13 +33,13 @@ export const AppLauncherHeader: React.FC<AppLauncherHeaderProps> = ({
     }}
   >
     <ListItemAvatar>
-      <Avatar 
-        src={`data:image/png;base64,${icon}`} 
+      <Avatar
+        src={`data:image/png;base64,${icon}`}
         alt={appName}
         onError={onIconError}
         sx={{
-          bgcolor: icon ? 'transparent' : 'primary.main',
-          color: icon ? undefined : 'primary.contrastText'
+          bgcolor: icon ? "transparent" : "primary.main",
+          color: icon ? undefined : "primary.contrastText",
         }}
       >
         {appName.charAt(0).toUpperCase()}
@@ -51,16 +51,14 @@ export const AppLauncherHeader: React.FC<AppLauncherHeaderProps> = ({
           {appName}
         </Typography>
       }
-      secondary={
-        !expanded && (
-          <Typography variant="body2" color="text.secondary" noWrap>
-            {link}
-          </Typography>
-        )
-      }
+      secondary={!expanded && (
+        <Typography variant="body2" color="text.secondary" noWrap>
+          {link}
+        </Typography>
+      )}
       sx={{
-        overflow: 'hidden',
-        textOverflow: 'ellipsis'
+        overflow: "hidden",
+        textOverflow: "ellipsis",
       }}
     />
   </ListItem>
